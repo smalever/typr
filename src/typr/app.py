@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import QApplication
 
 from typr.config import AppConfig
 from typr.core.audio_recorder import AudioRecorder
+from typr.core.history import HistoryEntry, HistoryManager
 from typr.core.hotkey_manager import HotkeyManager
 from typr.core.text_injector import TextInjector
 from typr.core.transcriber import WhisperTranscriber
@@ -64,12 +65,16 @@ class TyprApp(QObject):
         self.text_injector = TextInjector(self.config.ui.typing_delay)
         self.hotkey_manager = HotkeyManager(self.config.hotkeys)
 
+        # History
+        self.history = HistoryManager(self.config.history.max_entries)
+
         # UI components
         self.tray_icon = TrayIcon(self.config.hotkeys.push_to_talk)
         self.tray_icon.set_mode(self.config.transcription.mode)
 
-        # Settings dialog (lazy loaded)
+        # Dialogs (lazy loaded)
         self._settings_dialog: Optional["SettingsDialog"] = None
+        self._history_dialog: Optional["HistoryDialog"] = None
 
     def _connect_signals(self) -> None:
         """Connect all component signals."""
@@ -88,6 +93,7 @@ class TyprApp(QObject):
 
         # UI
         self.tray_icon.settings_requested.connect(self._show_settings)
+        self.tray_icon.history_requested.connect(self._show_history)
         self.tray_icon.quit_requested.connect(self._quit)
         self.tray_icon.record_toggled.connect(self._on_record_toggled)
 
@@ -177,6 +183,7 @@ class TyprApp(QObject):
             return
 
         logger.info(f"Transcription: {text[:50]}...")
+        self._record_history(text)
         self._set_state(AppState.TYPING)
 
         # Type the text
@@ -193,6 +200,19 @@ class TyprApp(QObject):
             return
 
         self._set_state(AppState.IDLE)
+
+    def _record_history(self, text: str) -> None:
+        """Persist a completed transcription to history if enabled."""
+        if not self.config.history.enabled:
+            return
+
+        self.history.add(
+            HistoryEntry.create(
+                text=text,
+                model=self.config.transcription.model,
+                language=self.config.transcription.language,
+            )
+        )
 
     @pyqtSlot(str)
     def _on_error(self, message: str) -> None:
@@ -260,6 +280,18 @@ class TyprApp(QObject):
         self._settings_dialog.activateWindow()
 
     @pyqtSlot()
+    def _show_history(self) -> None:
+        """Show transcription history dialog."""
+        from typr.ui.history_dialog import HistoryDialog
+
+        if self._history_dialog is None:
+            self._history_dialog = HistoryDialog(self.history)
+
+        self._history_dialog.show()
+        self._history_dialog.raise_()
+        self._history_dialog.activateWindow()
+
+    @pyqtSlot()
     def _on_settings_saved(self) -> None:
         """Handle settings saved."""
         logger.info("Settings saved, reloading")
@@ -275,6 +307,7 @@ class TyprApp(QObject):
         self.text_injector.set_typing_delay(self.config.ui.typing_delay)
         self.tray_icon.set_hotkey(self.config.hotkeys.push_to_talk)
         self.tray_icon.set_mode(self.config.transcription.mode)
+        self.history.set_max_entries(self.config.history.max_entries)
 
         # Re-register hotkey if changed
         self.hotkey_manager.update_shortcut(self.config.hotkeys.push_to_talk)

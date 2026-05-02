@@ -24,6 +24,7 @@ class TrayIcon(QSystemTrayIcon):
 
     # Signals
     settings_requested = pyqtSignal()
+    history_requested = pyqtSignal()
     quit_requested = pyqtSignal()
     toggle_mode = pyqtSignal()
     record_toggled = pyqtSignal(bool)  # True = start, False = stop
@@ -115,6 +116,11 @@ class TrayIcon(QSystemTrayIcon):
         menu.addAction(self._status_action)
 
         menu.addSeparator()
+
+        # History
+        history_action = QAction("History...", menu)
+        history_action.triggered.connect(self.history_requested.emit)
+        menu.addAction(history_action)
 
         # Settings
         settings_action = QAction("Settings...", menu)

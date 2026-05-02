@@ -76,6 +76,7 @@ class SettingsDialog(QDialog):
         tabs.addTab(self._create_api_tab(), "API")
         tabs.addTab(self._create_hotkeys_tab(), "Hotkeys")
         tabs.addTab(self._create_audio_tab(), "Audio")
+        tabs.addTab(self._create_history_tab(), "History")
         tabs.addTab(self._create_about_tab(), "About")
         layout.addWidget(tabs)
 
@@ -280,6 +281,35 @@ class SettingsDialog(QDialog):
 
         return widget
 
+    def _create_history_tab(self) -> QWidget:
+        """Create the History settings tab."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        history_group = QGroupBox("Transcription History")
+        history_layout = QFormLayout(history_group)
+
+        self._history_enabled_check = QCheckBox("Save transcription history")
+        history_layout.addRow(self._history_enabled_check)
+
+        self._history_max_spin = QSpinBox()
+        self._history_max_spin.setRange(10, 10000)
+        self._history_max_spin.setSingleStep(50)
+        self._history_max_spin.setSuffix(" entries")
+        history_layout.addRow("Max entries:", self._history_max_spin)
+
+        layout.addWidget(history_group)
+
+        info_label = QLabel(
+            "History is stored locally at <code>~/.local/share/typr/history.json</code>. "
+            "Open the History window from the tray icon to browse and copy past transcriptions."
+        )
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+
+        layout.addStretch()
+        return widget
+
     def _create_about_tab(self) -> QWidget:
         """Create the About tab."""
         widget = QWidget()
@@ -349,6 +379,10 @@ class SettingsDialog(QDialog):
         if device_index >= 0:
             self._device_combo.setCurrentIndex(device_index)
 
+        # History
+        self._history_enabled_check.setChecked(self.config.history.enabled)
+        self._history_max_spin.setValue(self.config.history.max_entries)
+
     def _save_settings(self) -> None:
         """Save settings from UI to config."""
         # API
@@ -377,6 +411,10 @@ class SettingsDialog(QDialog):
 
         # Audio
         self.config.audio.input_device = self._device_combo.currentData()
+
+        # History
+        self.config.history.enabled = self._history_enabled_check.isChecked()
+        self.config.history.max_entries = self._history_max_spin.value()
 
         # Save to file
         self.config.save()
