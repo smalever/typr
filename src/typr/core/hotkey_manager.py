@@ -168,8 +168,8 @@ class HotkeyManager(QObject):
     def _event_loop(self) -> None:
         """Main event loop reading from all keyboard devices."""
         import select
+        import time
 
-        # Create selector for all devices
         devices_by_fd = {dev.fd: dev for dev in self._devices}
 
         while self._running:
@@ -188,12 +188,39 @@ class HotkeyManager(QObject):
                                 self._handle_key_event(event)
                     except BlockingIOError:
                         pass
+                    except OSError as e:
+                        # Device disconnected - remove from tracking
+                        logger.warning(f"Device {device.path} disconnected: {e}")
+                        del devices_by_fd[fd]
+                        try:
+                            device.close()
+                        except Exception:
+                            pass
                     except Exception as e:
                         logger.debug(f"Error reading from {device.path}: {e}")
+
+            except OSError as e:
+                # select() failed - likely bad file descriptor
+                logger.error(f"Event loop select error: {e}")
+                # Remove all invalid fds
+                valid_fds = {}
+                for fd, dev in devices_by_fd.items():
+                    try:
+                        select.select([fd], [], [], 0)  # Quick test
+                        valid_fds[fd] = dev
+                    except Exception:
+                        logger.warning(f"Removing invalid device: {dev.path}")
+                        try:
+                            dev.close()
+                        except Exception:
+                            pass
+                devices_by_fd = valid_fds
+                time.sleep(0.1)  # Prevent tight loop even if all devices gone
 
             except Exception as e:
                 if self._running:
                     logger.error(f"Event loop error: {e}")
+                    time.sleep(0.1)  # Prevent tight loop on unexpected errors
 
     def _handle_key_event(self, event) -> None:
         """Handle a key press/release event."""
