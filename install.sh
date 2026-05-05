@@ -22,7 +22,9 @@ sudo pacman -S --needed --noconfirm \
     python-pyqt6 \
     python-pyaudio \
     python-dbus \
-    wtype \
+    wl-clipboard \
+    xclip \
+    xsel \
     portaudio
 
 echo

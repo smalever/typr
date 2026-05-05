@@ -118,11 +118,11 @@ class TyprApp(QObject):
                 self.tray_icon.MessageIcon.Warning,
             )
 
-        # Check for wtype
+        # Check for text injection support
         if not self.text_injector.is_available():
             self.tray_icon.show_notification(
                 "Typr",
-                "wtype not found. Install with: sudo pacman -S wtype",
+                "Text injection unavailable. Check /dev/uinput access and clipboard tools.",
                 self.tray_icon.MessageIcon.Warning,
             )
 

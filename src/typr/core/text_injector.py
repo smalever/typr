@@ -1,7 +1,12 @@
 """Text injection using evdev UInput for Wayland/X11."""
 
+import os
+import shutil
+import subprocess
 import time
 from typing import Optional
+
+from PyQt6.QtCore import QTimer
 
 from typr.utils.logger import logger
 
@@ -128,6 +133,8 @@ class TextInjector:
         self.typing_delay = typing_delay
         self._ui: Optional["UInput"] = None
         self._available = False
+        self._clipboard_restore_timer: Optional[QTimer] = None
+        self._clipboard_process: Optional[subprocess.Popen] = None
         self._init_uinput()
 
     def _init_uinput(self) -> None:
@@ -167,6 +174,9 @@ class TextInjector:
             return False
 
         try:
+            if self._requires_clipboard_paste(text):
+                return self._paste_text(text)
+
             delay_sec = self.typing_delay / 1000.0 if self.typing_delay > 0 else 0.001
 
             for char in text:
@@ -186,6 +196,102 @@ class TextInjector:
         except Exception as e:
             logger.error(f"Text injection failed: {e}")
             return False
+
+    def _requires_clipboard_paste(self, text: str) -> bool:
+        """Return True when text contains characters we cannot type directly."""
+        return any(char not in CHAR_TO_KEY for char in text)
+
+    def _paste_text(self, text: str) -> bool:
+        """Paste Unicode text through a desktop-specific clipboard backend."""
+        backend = self._detect_clipboard_backend()
+        if backend is None:
+            logger.error("No clipboard backend available for Unicode paste")
+            return False
+
+        process = self._spawn_clipboard_backend(backend, text)
+        if process is None:
+            return False
+
+        self._terminate_clipboard_process()
+        self._clipboard_process = process
+
+        time.sleep(0.12)
+        if "\n" in text:
+            self._type_modified_key(ecodes.KEY_INSERT, shift=True)
+        else:
+            self._type_modified_key(ecodes.KEY_V, ctrl=True)
+
+        self._schedule_clipboard_release()
+        logger.info(f"Pasted {len(text)} characters through {backend}")
+        return True
+
+    def _schedule_clipboard_release(self, delay_ms: int = 1500) -> None:
+        """Release clipboard backend after targets have had time to consume the paste."""
+        if self._clipboard_restore_timer is None:
+            self._clipboard_restore_timer = QTimer()
+            self._clipboard_restore_timer.setSingleShot(True)
+            self._clipboard_restore_timer.timeout.connect(self._on_release_clipboard_timeout)
+
+        self._clipboard_restore_timer.start(delay_ms)
+
+    def _on_release_clipboard_timeout(self) -> None:
+        """Release the clipboard helper process after paste completes."""
+        self._terminate_clipboard_process()
+
+    def _detect_clipboard_backend(self) -> Optional[str]:
+        """Pick the best available clipboard backend for the current session."""
+        if os.environ.get("WAYLAND_DISPLAY") and shutil.which("wl-copy"):
+            return "wl-copy"
+        if os.environ.get("DISPLAY"):
+            if shutil.which("xclip"):
+                return "xclip"
+            if shutil.which("xsel"):
+                return "xsel"
+        return None
+
+    def _spawn_clipboard_backend(self, backend: str, text: str) -> Optional[subprocess.Popen]:
+        """Start a clipboard backend process and feed it text."""
+        commands = {
+            "wl-copy": ["wl-copy", "--type", "text/plain;charset=utf-8", "--foreground"],
+            "xclip": ["xclip", "-selection", "clipboard", "-in"],
+            "xsel": ["xsel", "--clipboard", "--input"],
+        }
+        command = commands.get(backend)
+        if command is None:
+            logger.error(f"Unsupported clipboard backend: {backend}")
+            return None
+
+        try:
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                text=False,
+            )
+            assert process.stdin is not None
+            process.stdin.write(text.encode("utf-8"))
+            process.stdin.close()
+            return process
+        except Exception as e:
+            logger.error(f"Failed to start clipboard backend {backend}: {e}")
+            return None
+
+    def _terminate_clipboard_process(self) -> None:
+        """Stop any running clipboard helper process."""
+        if self._clipboard_process is None:
+            return
+        try:
+            if self._clipboard_process.poll() is None:
+                self._clipboard_process.terminate()
+                self._clipboard_process.wait(timeout=0.2)
+        except Exception:
+            try:
+                self._clipboard_process.kill()
+            except Exception:
+                pass
+        finally:
+            self._clipboard_process = None
 
     def _type_key(self, key_code: int, shift: bool = False) -> None:
         """Type a single key with optional shift modifier."""
@@ -207,6 +313,31 @@ class TextInjector:
         if shift:
             # Release shift
             self._ui.write(ecodes.EV_KEY, ecodes.KEY_LEFTSHIFT, 0)
+            self._ui.syn()
+
+    def _type_modified_key(self, key_code: int, shift: bool = False, ctrl: bool = False) -> None:
+        """Type a key with Ctrl and/or Shift modifiers."""
+        if not self._ui:
+            return
+
+        if ctrl:
+            self._ui.write(ecodes.EV_KEY, ecodes.KEY_LEFTCTRL, 1)
+            self._ui.syn()
+        if shift:
+            self._ui.write(ecodes.EV_KEY, ecodes.KEY_LEFTSHIFT, 1)
+            self._ui.syn()
+
+        self._ui.write(ecodes.EV_KEY, key_code, 1)
+        self._ui.syn()
+        time.sleep(0.001)
+        self._ui.write(ecodes.EV_KEY, key_code, 0)
+        self._ui.syn()
+
+        if shift:
+            self._ui.write(ecodes.EV_KEY, ecodes.KEY_LEFTSHIFT, 0)
+            self._ui.syn()
+        if ctrl:
+            self._ui.write(ecodes.EV_KEY, ecodes.KEY_LEFTCTRL, 0)
             self._ui.syn()
 
     def type_key(self, key: str) -> bool:
@@ -256,6 +387,7 @@ class TextInjector:
 
     def cleanup(self) -> None:
         """Clean up UInput device."""
+        self._terminate_clipboard_process()
         if self._ui:
             try:
                 self._ui.close()
