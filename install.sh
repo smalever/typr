@@ -31,10 +31,19 @@ echo
 
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VENV_DIR="$SCRIPT_DIR/.venv"
+VENV_PIP="$VENV_DIR/bin/pip"
+
+# Ensure virtual environment exists
+if [ ! -d "$VENV_DIR" ]; then
+    echo "Creating virtual environment in $VENV_DIR..."
+    python -m venv "$VENV_DIR"
+fi
 
 # Install Python package
-echo "Installing Typr Python package..."
-pip install --user -e "$SCRIPT_DIR"
+echo "Installing Typr Python package and dependencies into $VENV_DIR..."
+"$VENV_PIP" install --upgrade pip
+"$VENV_PIP" install -e "$SCRIPT_DIR"
 
 echo
 
@@ -42,10 +51,12 @@ echo
 echo "Installing desktop entries..."
 mkdir -p ~/.local/share/applications
 cp "$SCRIPT_DIR/resources/org.typr.desktop" ~/.local/share/applications/
+sed -i "s|^Exec=.*|Exec=$VENV_DIR/bin/typr|" ~/.local/share/applications/org.typr.desktop
 
 # Install autostart entry
 mkdir -p ~/.config/autostart
 cp "$SCRIPT_DIR/resources/typr.desktop" ~/.config/autostart/
+sed -i "s|^Exec=.*|Exec=$VENV_DIR/bin/typr|" ~/.config/autostart/typr.desktop
 
 # Install icons
 echo "Installing icons..."
@@ -66,7 +77,7 @@ echo "  Installation Complete!"
 echo "========================================="
 echo
 echo "Next steps:"
-echo "1. Run 'typr' to start the application"
+echo "1. Run '$VENV_DIR/bin/typr' to start the application"
 echo "2. Configure your OpenAI API key in Settings"
 echo "3. Use Meta+Shift+Space (default) to record"
 echo
