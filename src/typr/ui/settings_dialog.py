@@ -193,6 +193,10 @@ class SettingsDialog(QDialog):
         test_btn.clicked.connect(self._test_connection)
         api_layout.addRow("", test_btn)
 
+        self._api_test_status = QLabel("")
+        self._api_test_status.setWordWrap(True)
+        api_layout.addRow("", self._api_test_status)
+
         layout.addWidget(api_group)
 
         # Info
@@ -324,7 +328,7 @@ class SettingsDialog(QDialog):
         version.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(version)
 
-        desc = QLabel("Speech-to-text for Linux using OpenAI Whisper")
+        desc = QLabel("Speech-to-text for Linux using OpenAI and Parakeet-compatible APIs")
         desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(desc)
 
@@ -442,7 +446,7 @@ class SettingsDialog(QDialog):
 
     def _fetch_models(self) -> None:
         """Fetch available models from the API endpoint."""
-        base_url = self._api_base_edit.text() or "https://api.openai.com/v1"
+        base_url = (self._api_base_edit.text() or self.config.api_base_url or "https://api.openai.com/v1").rstrip("/")
         api_key = self._api_key_edit.text()
 
         self._fetch_models_btn.setEnabled(False)
@@ -456,13 +460,38 @@ class SettingsDialog(QDialog):
                 headers["Authorization"] = f"Bearer {api_key}"
 
             with httpx.Client(timeout=10.0) as client:
-                response = client.get(f"{base_url.rstrip('/')}/models", headers=headers)
-                response.raise_for_status()
-                data = response.json()
+                response = client.get(f"{base_url}/models", headers=headers)
+
+                # Some compatible servers expose model listing at a different path.
+                if response.status_code == 404:
+                    response = client.get(f"{base_url}/audio/models", headers=headers)
+                if response.status_code == 404:
+                    # Fallback: extract model enum from OpenAPI schema.
+                    schema_resp = client.get(
+                        f"{base_url.rsplit('/v1', 1)[0]}/openapi.json", headers=headers
+                    )
+                    schema_resp.raise_for_status()
+                    schema = schema_resp.json()
+                    model_enum = (
+                        schema.get("paths", {})
+                        .get("/v1/audio/transcriptions", {})
+                        .get("post", {})
+                        .get("requestBody", {})
+                        .get("content", {})
+                        .get("multipart/form-data", {})
+                        .get("schema", {})
+                        .get("properties", {})
+                        .get("model", {})
+                        .get("enum", [])
+                    )
+                    data = [{"id": model_id} for model_id in model_enum if model_id]
+                else:
+                    response.raise_for_status()
+                    data = response.json()
 
             # Extract model IDs
             models = []
-            if "data" in data:
+            if isinstance(data, dict) and "data" in data:
                 for model in data["data"]:
                     model_id = model.get("id", "")
                     if model_id:
@@ -494,6 +523,13 @@ class SettingsDialog(QDialog):
             )
 
         except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                QMessageBox.warning(
+                    self,
+                    "Error",
+                    "Model list endpoint not found. Check Base URL in API settings.",
+                )
+                return
             QMessageBox.warning(
                 self, "Error", f"API error: {e.response.status_code}\n{e.response.text[:200]}"
             )
@@ -506,30 +542,73 @@ class SettingsDialog(QDialog):
     def _test_connection(self) -> None:
         """Test API connection."""
         api_key = self._api_key_edit.text()
-        base_url = self._api_base_edit.text() or "https://api.openai.com/v1"
-
-        if not api_key:
-            QMessageBox.warning(self, "Error", "Please enter an API key")
-            return
+        base_url = (self._api_base_edit.text() or "https://api.openai.com/v1").rstrip("/")
+        self._api_test_status.setStyleSheet("")
+        self._api_test_status.setText("Checking connection...")
 
         try:
             import httpx
 
+            headers = {}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+
             with httpx.Client(timeout=10.0) as client:
-                response = client.get(
-                    f"{base_url}/models",
-                    headers={"Authorization": f"Bearer {api_key}"},
-                )
+                response = client.get(f"{base_url}/models", headers=headers)
+
+                # Some compatible servers don't expose /models. In that case,
+                # probe transcription endpoint instead.
+                if response.status_code == 404:
+                    probe = client.options(
+                        f"{base_url}/audio/transcriptions",
+                        headers=headers,
+                    )
+                    if probe.status_code == 404:
+                        probe.raise_for_status()
+                    if probe.status_code in (401, 403):
+                        probe.raise_for_status()
+                    if probe.status_code >= 500:
+                        probe.raise_for_status()
+                    self._set_api_test_status(
+                        True,
+                        "Settings are valid: transcription endpoint is available.",
+                    )
+                    return
+
                 response.raise_for_status()
 
-            QMessageBox.information(self, "Success", "Connection successful!")
+            self._set_api_test_status(True, "Settings are valid.")
 
         except httpx.HTTPStatusError as e:
-            QMessageBox.warning(
-                self, "Error", f"API error: {e.response.status_code}\n{e.response.text[:200]}"
-            )
+            status = e.response.status_code
+            details = e.response.text[:200].strip()
+            if status == 401:
+                msg = "Error 401: API key is missing or invalid."
+            elif status == 403:
+                msg = "Error 403: access denied (check API key and permissions)."
+            elif status == 404:
+                msg = "Error 404: endpoint not found (check Base URL)."
+            elif status == 429:
+                msg = "Error 429: rate limit exceeded."
+            elif 500 <= status <= 599:
+                msg = "Server error (5xx): issue on API side."
+            else:
+                msg = f"API error {status}."
+            if details:
+                msg = f"{msg}\n{details}"
+            self._set_api_test_status(False, msg)
+        except httpx.TimeoutException:
+            self._set_api_test_status(False, "Timeout: server did not respond in time.")
+        except httpx.NetworkError as e:
+            self._set_api_test_status(False, f"Network error: {e}")
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"Connection failed: {e}")
+            self._set_api_test_status(False, f"Connection error: {e}")
+
+    def _set_api_test_status(self, success: bool, message: str) -> None:
+        """Show API test status under the test button."""
+        color = "#66bb6a" if success else "#ff6b6b"
+        self._api_test_status.setStyleSheet(f"color: {color};")
+        self._api_test_status.setText(message)
 
     def _refresh_devices(self) -> None:
         """Refresh audio device list."""

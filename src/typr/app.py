@@ -109,15 +109,6 @@ class TyprApp(QObject):
         """Start the application."""
         logger.info("Starting Typr")
 
-        # Check for API key
-        if not self.config.api_key:
-            logger.warning("No API key configured")
-            self.tray_icon.show_notification(
-                "Typr",
-                "Please configure your API key in Settings",
-                self.tray_icon.MessageIcon.Warning,
-            )
-
         # Check for text injection support
         if not self.text_injector.is_available():
             self.tray_icon.show_notification(

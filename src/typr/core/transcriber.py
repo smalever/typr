@@ -43,9 +43,13 @@ class TranscriberWorker(QThread):
                 if self.prompt:
                     data["prompt"] = self.prompt
 
+                headers = {}
+                if self.api_key:
+                    headers["Authorization"] = f"Bearer {self.api_key}"
+
                 response = client.post(
                     f"{self.api_base_url}/audio/transcriptions",
-                    headers={"Authorization": f"Bearer {self.api_key}"},
+                    headers=headers,
                     files=files,
                     data=data,
                 )
@@ -108,10 +112,6 @@ class WhisperTranscriber(QObject):
         """
         if not audio_data:
             self.transcription_error.emit("No audio data to transcribe")
-            return
-
-        if not self.api_key:
-            self.transcription_error.emit("API key not configured")
             return
 
         logger.info(f"Starting transcription, {len(audio_data)} bytes")
