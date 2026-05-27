@@ -147,12 +147,7 @@ class SettingsDialog(QDialog):
         self._notif_duration_spin.setSuffix(" ms")
         ui_layout.addRow("Notification duration:", self._notif_duration_spin)
 
-        # Typing delay
-        self._typing_delay_spin = QSpinBox()
-        self._typing_delay_spin.setRange(0, 100)
-        self._typing_delay_spin.setSuffix(" ms")
-        self._typing_delay_spin.setToolTip("Delay between keystrokes (0 = no delay)")
-        ui_layout.addRow("Typing delay:", self._typing_delay_spin)
+
 
         layout.addWidget(ui_group)
         layout.addStretch()
@@ -368,7 +363,6 @@ class SettingsDialog(QDialog):
         # UI
         self._notifications_check.setChecked(self.config.ui.show_notifications)
         self._notif_duration_spin.setValue(self.config.ui.notification_duration)
-        self._typing_delay_spin.setValue(self.config.ui.typing_delay)
 
         # Hotkeys
         self._ptt_hotkey_edit.setKeySequence(
@@ -402,7 +396,6 @@ class SettingsDialog(QDialog):
         # UI
         self.config.ui.show_notifications = self._notifications_check.isChecked()
         self.config.ui.notification_duration = self._notif_duration_spin.value()
-        self.config.ui.typing_delay = self._typing_delay_spin.value()
 
         # Hotkeys
         ptt_seq = self._ptt_hotkey_edit.keySequence()
