@@ -211,10 +211,7 @@ class TextInjector:
         self._clipboard_process = process
 
         time.sleep(0.12)
-        if "\n" in text:
-            self._type_modified_key(ecodes.KEY_INSERT, shift=True)
-        else:
-            self._type_modified_key(ecodes.KEY_V, ctrl=True)
+        self._type_modified_key(ecodes.KEY_INSERT, shift=True)
 
         self._schedule_clipboard_release(self.restore_delay)  # Wait restore_delay before releasing/restoring
         logger.info(f"Pasted {len(text)} characters through {backend}")
