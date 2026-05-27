@@ -330,7 +330,7 @@ class SettingsDialog(QDialog):
 
         # Links
         links = QLabel(
-            '<a href="https://github.com/yourname/typr">GitHub</a> | '
+            '<a href="https://github.com/smalever/typr">GitHub</a> | '
             '<a href="https://platform.openai.com/docs/guides/speech-to-text">Whisper API Docs</a>'
         )
         links.setOpenExternalLinks(True)
