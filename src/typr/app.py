@@ -62,7 +62,10 @@ class TyprApp(QObject):
         self.transcriber.language = self.config.transcription.language
         self.transcriber.prompt = self.config.transcription.prompt
 
-        self.text_injector = TextInjector(self.config.ui.typing_delay)
+        self.text_injector = TextInjector(
+            typing_delay=self.config.ui.typing_delay,
+            restore_delay=self.config.ui.notification_duration,
+        )
         self.hotkey_manager = HotkeyManager(self.config.hotkeys)
 
         # History
@@ -296,6 +299,7 @@ class TyprApp(QObject):
             prompt=self.config.transcription.prompt,
         )
         self.text_injector.set_typing_delay(self.config.ui.typing_delay)
+        self.text_injector.set_restore_delay(self.config.ui.notification_duration)
         self.tray_icon.set_hotkey(self.config.hotkeys.push_to_talk)
         self.tray_icon.set_mode(self.config.transcription.mode)
         self.history.set_max_entries(self.config.history.max_entries)

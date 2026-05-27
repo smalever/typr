@@ -26,13 +26,15 @@ except ImportError:
 class TextInjector:
     """Injects text using evdev UInput (works on Wayland and X11)."""
 
-    def __init__(self, typing_delay: int = 0):
+    def __init__(self, typing_delay: int = 0, restore_delay: int = 3000):
         """Initialize text injector.
 
         Args:
             typing_delay: Delay between keystrokes in milliseconds.
+            restore_delay: Delay before restoring clipboard in milliseconds.
         """
         self.typing_delay = typing_delay
+        self.restore_delay = restore_delay
         self._ui: Optional["UInput"] = None
         self._available = False
         self._clipboard_restore_timer: Optional[QTimer] = None
@@ -214,7 +216,7 @@ class TextInjector:
         else:
             self._type_modified_key(ecodes.KEY_V, ctrl=True)
 
-        self._schedule_clipboard_release(3000)  # Wait 3 seconds before releasing/restoring
+        self._schedule_clipboard_release(self.restore_delay)  # Wait restore_delay before releasing/restoring
         logger.info(f"Pasted {len(text)} characters through {backend}")
         return True
 
@@ -319,6 +321,14 @@ class TextInjector:
             delay: Delay between keystrokes in milliseconds.
         """
         self.typing_delay = delay
+
+    def set_restore_delay(self, delay: int) -> None:
+        """Set the clipboard restore delay in milliseconds.
+
+        Args:
+            delay: Delay before restoring clipboard in milliseconds.
+        """
+        self.restore_delay = delay
 
     def cleanup(self) -> None:
         """Clean up UInput device."""
