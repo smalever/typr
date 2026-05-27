@@ -3,114 +3,109 @@
 </div>
 
 <h1 align="center">Typr</h1>
-<p align="center">Push-to-talk speech-to-text for Linux desktop</p>
+<p align="center">Push-to-talk speech-to-text (голосовой ввод) для рабочего стола Linux</p>
 
 <p align="center">
-  <a href="https://opensource.org/licenses/MIT"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-blue.svg"></a>
+  <a href="https://opensource.org/licenses/MIT"><img alt="Лицензия MIT" src="https://img.shields.io/badge/License-MIT-blue.svg"></a>
   <a href="https://www.python.org/downloads/"><img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10+-blue.svg"></a>
-  <a href="https://github.com/murtaza-nasir/typr/releases/latest"><img alt="Latest Version" src="https://img.shields.io/badge/version-0.1.0-brightgreen.svg"></a>
+  <a href="https://github.com/murtaza-nasir/typr/releases/latest"><img alt="Последняя версия" src="https://img.shields.io/badge/version-0.1.0-brightgreen.svg"></a>
 </p>
 
 <p align="center">
-  <a href="#features">Features</a> •
-  <a href="#installation">Installation</a> •
-  <a href="#usage">Usage</a> •
-  <a href="#configuration">Configuration</a> •
-  <a href="#troubleshooting">Troubleshooting</a>
+  <a href="#обзор">Обзор</a> •
+  <a href="#возможности">Возможности</a> •
+  <a href="#установка">Установка</a> •
+  <a href="#использование">Использование</a> •
+  <a href="#настройка">Настройка</a> •
+  <a href="#устранение-неполадок">Устранение неполадок</a>
 </p>
 
 ---
 
-## Overview
+## Обзор
 
-Typr is a lightweight speech-to-text application that lives in your system tray. Hold a hotkey to record your voice, release to transcribe, and the text is automatically typed into any focused input field. Works with OpenAI's Whisper API or any compatible local endpoint.
+**Typr** — это легковесное приложение для голосового ввода (speech-to-text), работающее из системного трея. Зажмите горячую клавишу для записи голоса, отпустите её для транскрипции — и распознанный текст автоматически вставится в любое активное текстовое поле. Поддерживается работа как с официальным OpenAI Whisper API, так и с любым совместимым локальным эндпоинтом.
 
-**Key highlights:**
-- 🎤 **Push-to-talk** - Natural voice input workflow
-- ⌨️ **Types anywhere** - Works in any application, any input field
-- 🐧 **Linux native** - Built for Wayland and X11 using evdev
-- 🏠 **Self-hosted friendly** - Use local Whisper servers or OpenAI API
+**Ключевые особенности:**
+- 🎤 **Push-to-talk** — естественный рабочий процесс голосового ввода (зажмите, чтобы говорить).
+- ⌨️ **Вставка в любом месте** — текст автоматически вставляется в активное окно любого приложения.
+- 🌐 **Независимость от раскладки** — благодаря механизму вставки через буфер обмена, корректно вводит русский, английский и любой другой Unicode-текст (включая эмодзи) независимо от текущего языка ввода вашей системы.
+- 🐧 **Разработано для Linux** — полноценно работает в сессиях Wayland и X11 с использованием `evdev`/`uinput`.
+- 🔌 **Поддержка Hotplug** — автоматически на лету обнаруживает новые клавиатуры, подключенные после запуска приложения.
+- 🏠 **Локальные сервера** — возможность работы с локально развернутыми серверами Whisper.
 
-## Features
+---
 
-### Core Functionality
-- **Push-to-Talk Recording** - Hold hotkey to record, release to transcribe and type
-- **Universal Text Input** - Types directly into any focused field using kernel-level input
-- **System Tray Integration** - Runs quietly with visual status indicators
-- **Click-to-Record** - Alternative mouse-based recording via tray icon
+## Возможности
 
-### Flexibility
-- **Custom API Endpoints** - Use OpenAI, local Whisper servers, or any compatible API
-- **Dynamic Model Discovery** - Fetch available models from your endpoint
-- **Configurable Hotkeys** - Set any key combination for push-to-talk
-- **Multiple Whisper Models** - Support for whisper-1, gpt-4o-transcribe, and custom models
+### Основной функционал
+- **Запись по нажатию (Push-to-Talk)** — удерживайте клавишу для записи, отпустите для завершения и вставки.
+- **Универсальная вставка текста** — мгновенная раскладочно-независимая вставка текста с помощью виртуального устройства ввода уровня ядра.
+- **Защита буфера обмена** — перед вставкой текущий текст из вашего буфера обмена сохраняется и автоматически восстанавливается через 3 секунды. Если вы скопируете что-то новое во время ожидания, восстановление отменится, чтобы не перезаписать ваши свежие данные.
+- **Интеграция с треем** — работа в фоновом режиме с цветовыми индикаторами статуса приложения (запись, отправка, ошибка).
+- **Запись кликом мыши** — альтернативный режим: левый клик по иконке в трее для старта записи, повторный клик для остановки.
 
-### Technical
-- **Wayland & X11 Support** - Uses evdev for compositor-independent operation
-- **No Root Required** - Works with standard `input` group membership
-- **Lightweight** - Minimal resource usage, Python/PyQt6 based
-- **Auto-start** - Optional launch on login
+### Гибкость настройки
+- **Пользовательские API эндпоинты** — используйте OpenAI или локальные Whisper-сервера.
+- **Динамический поиск моделей** — кнопка «Fetch» в настройках запрашивает список доступных моделей с вашего эндпоинта.
+- **Настраиваемые горячие клавиши** — возможность задать любое удобное сочетание клавиш для записи.
+- **История транскрипций** — сохранение истории записей локально с удобным поиском, копированием и удалением записей.
 
-## Installation
+### Технические детали
+- **Поддержка Wayland и X11** — работа через подсистему `evdev` не зависит от используемого композитора.
+- **Автоматическая настройка прав** — установщик сам создает правила `udev` для `/dev/uinput` и добавляет пользователя в группу `input` для работы без root-прав.
+- **Улучшенная отзывчивость** — сетевой тайм-аут Whisper сокращен до 15 секунд для предотвращения зависания статуса.
 
-### Quick Install (Arch/CachyOS)
+---
+
+## Установка
+
+### Быстрая установка (Arch Linux / CachyOS)
 
 ```bash
-# Clone the repository
+# Клонируйте репозиторий
 git clone https://github.com/murtaza-nasir/typr.git
 cd typr
 
-# Run installer
+# Запустите установщик (он автоматически настроит зависимости, виртуальное окружение и правила udev)
 ./install.sh
 ```
 
-### Manual Installation
+> [!NOTE]
+> После первой установки может потребоваться выйти из системы (Log Out) и зайти снова, чтобы применились права группы `input`.
 
+### Проверка настройки
+
+Проверьте, что ваш пользователь состоит в группе `input`:
 ```bash
-# Install system dependencies
-sudo pacman -S python-pyqt6 python-pyaudio portaudio
-
-# Install Python package
-pip install --user -e .
-
-# Add yourself to the input group (required for hotkeys and typing)
-sudo usermod -aG input $USER
-
-# Log out and back in for group membership to take effect
+groups | grep input
 ```
 
-### Verify Setup
-
+Запустите Typr:
 ```bash
-# Check you're in the input group
-groups | grep input
-
-# Run Typr
 typr
 ```
 
-## Usage
+---
 
-1. **Launch** - Run `typr` or find it in your application menu
-2. **Configure** - Right-click tray icon → **Settings**
-   - Go to **API** tab → Enter your API key and endpoint
-   - Go to **General** tab → Click **Fetch** to load available models
-3. **Record** - **Hold** `Meta+Shift+Space` to record
-4. **Transcribe** - **Release** the hotkey to transcribe and type
+## Использование
 
-The transcribed text will be typed into whatever input field is currently focused.
+1. **Запуск** — запустите `typr` из меню ваших приложений или через терминал.
+2. **Настройка** — нажмите правой кнопкой мыши по иконке в трее → **Settings**.
+   - Перейдите во вкладку **API** → введите адрес вашего сервера и API-ключ (если требуется).
+   - Во вкладке **General** → нажмите **Fetch**, чтобы получить список доступных моделей с сервера, и выберите нужную.
+3. **Запись** — **зажмите** сочетание клавиш `Meta+Shift+Space` (по умолчанию) и говорите.
+4. **Вставка** — **отпустите** клавиши. Текст распознается и вставится в текстовое поле, где стоял фокус.
 
-### Alternative: Click to Record
+---
 
-You can also **left-click** the tray icon to start recording, and click again to stop.
+## Настройка
 
-## Configuration
+Конфигурационный файл хранится по пути: `~/.config/typr/config.json`
 
-Settings are stored in `~/.config/typr/config.json`
+### Горячие клавиши
 
-### Hotkeys
-
-Configure via Settings → Hotkeys tab, or edit the config file:
+Настройка доступна через графический интерфейс (Settings → Hotkeys) или вручную в конфигурационном файле:
 
 ```json
 {
@@ -120,91 +115,60 @@ Configure via Settings → Hotkeys tab, or edit the config file:
 }
 ```
 
-**Supported format:** `Modifier+Modifier+Key`
+Поддерживаемый формат: `Модификатор+Модификатор+Клавиша` (например, `Meta+Shift+Space`).
 
-| Modifiers | Keys |
-|-----------|------|
-| `Meta` (Super/Win) | `Space`, `Enter`, `Tab` |
-| `Shift` | `F1` - `F12` |
-| `Ctrl` | `A` - `Z` |
-| `Alt` | `0` - `9` |
+---
 
-### API Endpoints
+## Устранение неполадок
 
-Works with any OpenAI-compatible transcription API:
-
-| Provider | Base URL |
-|----------|----------|
-| OpenAI | `https://api.openai.com/v1` |
-| Local Whisper | `http://localhost:8080/v1` |
-| Custom | Any OpenAI-compatible endpoint |
-
-### Models
-
-**OpenAI models:**
-- `whisper-1` - Standard Whisper model
-- `gpt-4o-transcribe` - Higher accuracy
-- `gpt-4o-mini-transcribe` - Faster processing
-
-**Local endpoints:** Click **Fetch** in Settings to discover available models.
-
-## Troubleshooting
-
-### "No keyboard devices found"
-
-You need to be in the `input` group:
-
+### Ошибка «No keyboard devices found» или проблемы со вставкой текста
+Убедитесь, что ваш пользователь добавлен в группу `input`:
+```bash
+groups | grep input
+```
+Если группы нет, выполните:
 ```bash
 sudo usermod -aG input $USER
-# Log out and back in
+```
+После этого обязательно выйдите из системы и зайдите снова (или перезагрузите ПК).
+
+### Ошибки прав доступа к `/dev/uinput`
+Убедитесь, что файл `/etc/udev/rules.d/99-uinput.rules` существует и содержит строку:
+```udev
+KERNEL=="uinput", GROUP="input", MODE="0660"
+```
+Установщик `install.sh` делает это автоматически, но в некоторых системах может потребоваться ручная перезагрузка правил:
+```bash
+sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
-### Text not being typed
+### Зависание статуса «Transcribing...»
+Тайм-аут ожидания сети составляет 15 секунд. Если по истечении этого времени транскрипция не завершилась, проверьте доступность вашего API-сервера с помощью кнопки **Test Connection** во вкладке **API** окна настроек.
 
-Same fix - the `input` group is required for UInput (virtual keyboard):
+---
+
+## Удаление приложения
+
+Для полной очистки системы от интеграции Typr и удаления виртуального окружения запустите деинсталлятор из папки проекта:
 
 ```bash
-groups | grep input  # Should show 'input'
+./uninstall.sh
 ```
+*Примечание: скрипт удалит все настройки, кэш, историю и окружение, но сохранит саму папку с исходным кодом репозитория.*
 
-### ALSA/JACK warnings on startup
+---
 
-These are harmless - PyAudio probes various audio backends during initialization. The warnings don't affect functionality.
+## Стек технологий
 
-### Hotkey not working
+- **Язык программирования**: Python 3.10+
+- **Интерфейс (GUI)**: PyQt6
+- **Аудио**: PyAudio (совместим с PipeWire и PulseAudio)
+- **Низкоуровневый ввод**: evdev / uinput (прямой доступ к устройствам ввода Linux)
+- **Сетевой клиент**: httpx
+- **Утилиты буфера обмена**: wl-clipboard (для Wayland), xclip/xsel (для X11)
 
-1. Verify the hotkey format in Settings → Hotkeys
-2. Check that no other application is using the same hotkey
-3. Try a different key combination
+---
 
-### API errors
+## Лицензия
 
-1. Verify your API key is correct
-2. Check the base URL matches your provider
-3. Click **Test Connection** in Settings → API tab
-4. For local endpoints, ensure the server is running
-
-## Tech Stack
-
-- **Language**: Python 3.10+
-- **UI Framework**: PyQt6
-- **Audio**: PyAudio with PipeWire/PulseAudio
-- **Input/Output**: evdev (kernel-level keyboard access)
-- **API Client**: httpx
-
-## License
-
-This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit issues and pull requests.
-
-- [Report bugs](https://github.com/murtaza-nasir/typr/issues)
-- [Request features](https://github.com/murtaza-nasir/typr/issues)
-
-## Acknowledgments
-
-- [OpenAI Whisper](https://openai.com/research/whisper) for the transcription API
-- [evdev](https://python-evdev.readthedocs.io/) for Linux input device access
-- [PyQt6](https://www.riverbankcomputing.com/software/pyqt/) for the UI framework
+Проект распространяется под лицензией **MIT**. Подробности читайте в файле [LICENSE](LICENSE).
