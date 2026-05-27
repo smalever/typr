@@ -32,15 +32,22 @@ if command -v gtk-update-icon-cache &> /dev/null; then
     gtk-update-icon-cache -f ~/.local/share/icons/hicolor 2>/dev/null || true
 fi
 
-echo "Removing Typr user configuration and data..."
+echo "Removing Typr user configuration, cache, and history..."
 rm -rf ~/.config/typr
 rm -rf ~/.cache/typr
 rm -rf ~/.local/state/typr
+rm -rf ~/.local/share/typr
 
 echo "Removing legacy user-level Python install (if present)..."
 python3 -m pip uninstall -y typr 2>/dev/null || true
 rm -f ~/.local/bin/typr
 rm -f ~/.local/bin/typr-gui
+
+echo "Removing virtual environment..."
+if [ -d "$VENV_DIR" ]; then
+    rm -rf "$VENV_DIR"
+    echo "Virtual environment removed."
+fi
 
 echo
 echo "========================================="
@@ -48,6 +55,5 @@ echo "  Uninstall Complete"
 echo "========================================="
 echo
 echo "Kept intact:"
-echo "- Project directory: $SCRIPT_DIR"
-echo "- Virtual environment: $VENV_DIR"
+echo "- Project repository directory: $SCRIPT_DIR"
 echo

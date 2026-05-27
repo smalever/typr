@@ -34,7 +34,7 @@ class TranscriberWorker(QThread):
     def run(self) -> None:
         """Execute the API request."""
         try:
-            with httpx.Client(timeout=60.0) as client:
+            with httpx.Client(timeout=15.0) as client:
                 files = {"file": ("audio.wav", self.audio_data, "audio/wav")}
                 data = {"model": self.model}
 

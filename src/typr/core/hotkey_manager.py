@@ -171,9 +171,21 @@ class HotkeyManager(QObject):
         import time
 
         devices_by_fd = {dev.fd: dev for dev in self._devices}
+        last_scan_time = 0.0
 
         while self._running:
             try:
+                # Check for new keyboard devices dynamically every 5 seconds
+                now = time.time()
+                if now - last_scan_time > 5.0:
+                    last_scan_time = now
+                    self._scan_for_new_devices(devices_by_fd)
+
+                # If no devices are tracked, sleep and try again
+                if not devices_by_fd:
+                    time.sleep(0.5)
+                    continue
+
                 # Wait for events with timeout
                 r, _, _ = select.select(devices_by_fd.keys(), [], [], 0.1)
 
@@ -192,6 +204,11 @@ class HotkeyManager(QObject):
                         # Device disconnected - remove from tracking
                         logger.warning(f"Device {device.path} disconnected: {e}")
                         del devices_by_fd[fd]
+                        if device in self._devices:
+                            try:
+                                self._devices.remove(device)
+                            except ValueError:
+                                pass
                         try:
                             device.close()
                         except Exception:
@@ -210,6 +227,11 @@ class HotkeyManager(QObject):
                         valid_fds[fd] = dev
                     except Exception:
                         logger.warning(f"Removing invalid device: {dev.path}")
+                        if dev in self._devices:
+                            try:
+                                self._devices.remove(dev)
+                            except ValueError:
+                                pass
                         try:
                             dev.close()
                         except Exception:
@@ -221,6 +243,39 @@ class HotkeyManager(QObject):
                 if self._running:
                     logger.error(f"Event loop error: {e}")
                     time.sleep(0.1)  # Prevent tight loop on unexpected errors
+
+    def _scan_for_new_devices(self, devices_by_fd: dict) -> None:
+        """Scan /dev/input for new keyboard devices and add them to tracking."""
+        if not EVDEV_AVAILABLE:
+            return
+
+        try:
+            current_paths = {dev.path for dev in devices_by_fd.values()}
+            input_dir = Path("/dev/input")
+
+            for event_file in sorted(input_dir.glob("event*")):
+                path = str(event_file)
+                if path in current_paths:
+                    continue
+
+                try:
+                    device = evdev.InputDevice(path)
+                    capabilities = device.capabilities()
+
+                    # Check if device has keyboard keys (EV_KEY with typical keyboard codes)
+                    if ecodes.EV_KEY in capabilities:
+                        keys = capabilities[ecodes.EV_KEY]
+                        if ecodes.KEY_SPACE in keys or ecodes.KEY_A in keys:
+                            devices_by_fd[device.fd] = device
+                            self._devices.append(device)
+                            logger.info(f"Dynamically added keyboard: {device.name} ({device.path})")
+                except PermissionError:
+                    pass
+                except Exception as e:
+                    logger.debug(f"Error checking new device {path}: {e}")
+        except Exception as e:
+            logger.debug(f"Failed to scan for new devices: {e}")
+
 
     def _handle_key_event(self, event) -> None:
         """Handle a key press/release event."""

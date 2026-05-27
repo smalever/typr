@@ -19,106 +19,8 @@ except ImportError:
     logger.warning("evdev not available for text injection")
 
 
-# Character to key code mapping (US keyboard layout)
-CHAR_TO_KEY = {
-    "a": (ecodes.KEY_A, False),
-    "b": (ecodes.KEY_B, False),
-    "c": (ecodes.KEY_C, False),
-    "d": (ecodes.KEY_D, False),
-    "e": (ecodes.KEY_E, False),
-    "f": (ecodes.KEY_F, False),
-    "g": (ecodes.KEY_G, False),
-    "h": (ecodes.KEY_H, False),
-    "i": (ecodes.KEY_I, False),
-    "j": (ecodes.KEY_J, False),
-    "k": (ecodes.KEY_K, False),
-    "l": (ecodes.KEY_L, False),
-    "m": (ecodes.KEY_M, False),
-    "n": (ecodes.KEY_N, False),
-    "o": (ecodes.KEY_O, False),
-    "p": (ecodes.KEY_P, False),
-    "q": (ecodes.KEY_Q, False),
-    "r": (ecodes.KEY_R, False),
-    "s": (ecodes.KEY_S, False),
-    "t": (ecodes.KEY_T, False),
-    "u": (ecodes.KEY_U, False),
-    "v": (ecodes.KEY_V, False),
-    "w": (ecodes.KEY_W, False),
-    "x": (ecodes.KEY_X, False),
-    "y": (ecodes.KEY_Y, False),
-    "z": (ecodes.KEY_Z, False),
-    "A": (ecodes.KEY_A, True),
-    "B": (ecodes.KEY_B, True),
-    "C": (ecodes.KEY_C, True),
-    "D": (ecodes.KEY_D, True),
-    "E": (ecodes.KEY_E, True),
-    "F": (ecodes.KEY_F, True),
-    "G": (ecodes.KEY_G, True),
-    "H": (ecodes.KEY_H, True),
-    "I": (ecodes.KEY_I, True),
-    "J": (ecodes.KEY_J, True),
-    "K": (ecodes.KEY_K, True),
-    "L": (ecodes.KEY_L, True),
-    "M": (ecodes.KEY_M, True),
-    "N": (ecodes.KEY_N, True),
-    "O": (ecodes.KEY_O, True),
-    "P": (ecodes.KEY_P, True),
-    "Q": (ecodes.KEY_Q, True),
-    "R": (ecodes.KEY_R, True),
-    "S": (ecodes.KEY_S, True),
-    "T": (ecodes.KEY_T, True),
-    "U": (ecodes.KEY_U, True),
-    "V": (ecodes.KEY_V, True),
-    "W": (ecodes.KEY_W, True),
-    "X": (ecodes.KEY_X, True),
-    "Y": (ecodes.KEY_Y, True),
-    "Z": (ecodes.KEY_Z, True),
-    "0": (ecodes.KEY_0, False),
-    "1": (ecodes.KEY_1, False),
-    "2": (ecodes.KEY_2, False),
-    "3": (ecodes.KEY_3, False),
-    "4": (ecodes.KEY_4, False),
-    "5": (ecodes.KEY_5, False),
-    "6": (ecodes.KEY_6, False),
-    "7": (ecodes.KEY_7, False),
-    "8": (ecodes.KEY_8, False),
-    "9": (ecodes.KEY_9, False),
-    " ": (ecodes.KEY_SPACE, False),
-    "\n": (ecodes.KEY_ENTER, False),
-    "\t": (ecodes.KEY_TAB, False),
-    ".": (ecodes.KEY_DOT, False),
-    ",": (ecodes.KEY_COMMA, False),
-    "!": (ecodes.KEY_1, True),
-    "@": (ecodes.KEY_2, True),
-    "#": (ecodes.KEY_3, True),
-    "$": (ecodes.KEY_4, True),
-    "%": (ecodes.KEY_5, True),
-    "^": (ecodes.KEY_6, True),
-    "&": (ecodes.KEY_7, True),
-    "*": (ecodes.KEY_8, True),
-    "(": (ecodes.KEY_9, True),
-    ")": (ecodes.KEY_0, True),
-    "-": (ecodes.KEY_MINUS, False),
-    "_": (ecodes.KEY_MINUS, True),
-    "=": (ecodes.KEY_EQUAL, False),
-    "+": (ecodes.KEY_EQUAL, True),
-    "[": (ecodes.KEY_LEFTBRACE, False),
-    "]": (ecodes.KEY_RIGHTBRACE, False),
-    "{": (ecodes.KEY_LEFTBRACE, True),
-    "}": (ecodes.KEY_RIGHTBRACE, True),
-    "\\": (ecodes.KEY_BACKSLASH, False),
-    "|": (ecodes.KEY_BACKSLASH, True),
-    ";": (ecodes.KEY_SEMICOLON, False),
-    ":": (ecodes.KEY_SEMICOLON, True),
-    "'": (ecodes.KEY_APOSTROPHE, False),
-    '"': (ecodes.KEY_APOSTROPHE, True),
-    "`": (ecodes.KEY_GRAVE, False),
-    "~": (ecodes.KEY_GRAVE, True),
-    "/": (ecodes.KEY_SLASH, False),
-    "?": (ecodes.KEY_SLASH, True),
-    "<": (ecodes.KEY_COMMA, True),
-    ">": (ecodes.KEY_DOT, True),
-} if EVDEV_AVAILABLE else {}
+# CHAR_TO_KEY dictionary is removed to get rid of keyboard layout binding legacy.
+
 
 
 class TextInjector:
@@ -174,32 +76,119 @@ class TextInjector:
             return False
 
         try:
-            if self._requires_clipboard_paste(text):
-                return self._paste_text(text)
-
-            delay_sec = self.typing_delay / 1000.0 if self.typing_delay > 0 else 0.001
-
-            for char in text:
-                if char in CHAR_TO_KEY:
-                    key_code, shift = CHAR_TO_KEY[char]
-                    self._type_key(key_code, shift)
-                else:
-                    # Skip unsupported characters
-                    logger.debug(f"Skipping unsupported character: {repr(char)}")
-
-                if delay_sec > 0:
-                    time.sleep(delay_sec)
-
-            logger.info(f"Typed {len(text)} characters")
-            return True
+            backend = self._detect_clipboard_backend()
+            if backend is None:
+                logger.error("No clipboard backend (wl-clipboard/xclip/xsel) available. Cannot paste text.")
+                return False
+            return self._paste_text(text)
 
         except Exception as e:
             logger.error(f"Text injection failed: {e}")
             return False
 
-    def _requires_clipboard_paste(self, text: str) -> bool:
-        """Return True when text contains characters we cannot type directly."""
-        return any(char not in CHAR_TO_KEY for char in text)
+
+    def _backup_clipboard(self) -> None:
+        """Back up the current clipboard text."""
+        self._backup_text = ""
+        self._has_backup = False
+        
+        backend = self._detect_clipboard_backend()
+        if backend is None:
+            return
+
+        try:
+            if backend == "wl-copy":
+                # wl-paste exits with code 1 if empty or if clipboard format is not text
+                res = subprocess.run(
+                    ["wl-paste", "-n"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    timeout=0.5,
+                )
+                if res.returncode == 0:
+                    self._backup_text = res.stdout.decode("utf-8", errors="replace")
+                    self._has_backup = True
+            elif backend == "xclip":
+                res = subprocess.run(
+                    ["xclip", "-selection", "clipboard", "-o"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    timeout=0.5,
+                )
+                if res.returncode == 0:
+                    self._backup_text = res.stdout.decode("utf-8", errors="replace")
+                    self._has_backup = True
+            elif backend == "xsel":
+                res = subprocess.run(
+                    ["xsel", "--clipboard", "--output"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    timeout=0.5,
+                )
+                if res.returncode == 0:
+                    self._backup_text = res.stdout.decode("utf-8", errors="replace")
+                    self._has_backup = True
+            
+            if self._has_backup:
+                logger.debug(f"Clipboard backed up successfully ({len(self._backup_text)} chars)")
+        except subprocess.TimeoutExpired:
+            logger.warning("Clipboard backup timed out")
+        except Exception as e:
+            logger.debug(f"Failed to backup clipboard: {e}")
+
+    def _restore_clipboard(self) -> None:
+        """Restore the original clipboard content if the user hasn't overwritten it."""
+        backend = self._detect_clipboard_backend()
+        if backend is None:
+            return
+
+        # Check if the clipboard still has the pasted text
+        current_text = ""
+        try:
+            if backend == "wl-copy":
+                res = subprocess.run(["wl-paste", "-n"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=0.5)
+                if res.returncode == 0:
+                    current_text = res.stdout.decode("utf-8", errors="replace")
+            elif backend == "xclip":
+                res = subprocess.run(["xclip", "-selection", "clipboard", "-o"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=0.5)
+                if res.returncode == 0:
+                    current_text = res.stdout.decode("utf-8", errors="replace")
+            elif backend == "xsel":
+                res = subprocess.run(["xsel", "--clipboard", "--output"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=0.5)
+                if res.returncode == 0:
+                    current_text = res.stdout.decode("utf-8", errors="replace")
+        except Exception as e:
+            logger.debug(f"Failed to read clipboard for verification: {e}")
+            return
+
+        # If the clipboard text is different from what we pasted, the user copied something new. Do not overwrite it!
+        pasted_text = getattr(self, "_pasted_text", "")
+        if current_text != pasted_text:
+            logger.debug("Clipboard content changed by user, skipping restore")
+            return
+
+        # Perform restore
+        if not getattr(self, "_has_backup", False):
+            # Clear clipboard
+            try:
+                if backend == "wl-copy":
+                    subprocess.run(["wl-copy", "--clear"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                elif backend == "xclip":
+                    subprocess.run(["xclip", "-selection", "clipboard", "/dev/null"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                elif backend == "xsel":
+                    subprocess.run(["xsel", "--clipboard", "--clear"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                logger.debug("Clipboard cleared (no backup existed)")
+            except Exception as e:
+                logger.debug(f"Failed to clear clipboard: {e}")
+            return
+
+        try:
+            # Restore original clipboard
+            backup_text = getattr(self, "_backup_text", "")
+            self._spawn_clipboard_backend(backend, backup_text)
+            logger.debug(f"Clipboard restored ({len(backup_text)} chars)")
+        except Exception as e:
+            logger.error(f"Failed to restore clipboard: {e}")
 
     def _paste_text(self, text: str) -> bool:
         """Paste Unicode text through a desktop-specific clipboard backend."""
@@ -207,6 +196,10 @@ class TextInjector:
         if backend is None:
             logger.error("No clipboard backend available for Unicode paste")
             return False
+
+        # Backup clipboard first
+        self._backup_clipboard()
+        self._pasted_text = text
 
         process = self._spawn_clipboard_backend(backend, text)
         if process is None:
@@ -221,7 +214,7 @@ class TextInjector:
         else:
             self._type_modified_key(ecodes.KEY_V, ctrl=True)
 
-        self._schedule_clipboard_release()
+        self._schedule_clipboard_release(3000)  # Wait 3 seconds before releasing/restoring
         logger.info(f"Pasted {len(text)} characters through {backend}")
         return True
 
@@ -235,8 +228,10 @@ class TextInjector:
         self._clipboard_restore_timer.start(delay_ms)
 
     def _on_release_clipboard_timeout(self) -> None:
-        """Release the clipboard helper process after paste completes."""
+        """Release the clipboard helper process after paste completes and restore original clipboard."""
         self._terminate_clipboard_process()
+        self._restore_clipboard()
+
 
     def _detect_clipboard_backend(self) -> Optional[str]:
         """Pick the best available clipboard backend for the current session."""
@@ -292,29 +287,6 @@ class TextInjector:
                 pass
         finally:
             self._clipboard_process = None
-
-    def _type_key(self, key_code: int, shift: bool = False) -> None:
-        """Type a single key with optional shift modifier."""
-        if not self._ui:
-            return
-
-        if shift:
-            # Press shift
-            self._ui.write(ecodes.EV_KEY, ecodes.KEY_LEFTSHIFT, 1)
-            self._ui.syn()
-
-        # Press and release key
-        self._ui.write(ecodes.EV_KEY, key_code, 1)
-        self._ui.syn()
-        time.sleep(0.001)
-        self._ui.write(ecodes.EV_KEY, key_code, 0)
-        self._ui.syn()
-
-        if shift:
-            # Release shift
-            self._ui.write(ecodes.EV_KEY, ecodes.KEY_LEFTSHIFT, 0)
-            self._ui.syn()
-
     def _type_modified_key(self, key_code: int, shift: bool = False, ctrl: bool = False) -> None:
         """Type a key with Ctrl and/or Shift modifiers."""
         if not self._ui:
@@ -339,43 +311,6 @@ class TextInjector:
         if ctrl:
             self._ui.write(ecodes.EV_KEY, ecodes.KEY_LEFTCTRL, 0)
             self._ui.syn()
-
-    def type_key(self, key: str) -> bool:
-        """Press a special key.
-
-        Args:
-            key: Key name (e.g., 'Return', 'Tab', 'BackSpace').
-
-        Returns:
-            True if successful, False otherwise.
-        """
-        if not self.is_available():
-            return False
-
-        key_map = {
-            "return": ecodes.KEY_ENTER,
-            "enter": ecodes.KEY_ENTER,
-            "tab": ecodes.KEY_TAB,
-            "backspace": ecodes.KEY_BACKSPACE,
-            "escape": ecodes.KEY_ESC,
-            "space": ecodes.KEY_SPACE,
-            "up": ecodes.KEY_UP,
-            "down": ecodes.KEY_DOWN,
-            "left": ecodes.KEY_LEFT,
-            "right": ecodes.KEY_RIGHT,
-        }
-
-        key_code = key_map.get(key.lower())
-        if key_code is None:
-            logger.warning(f"Unknown key: {key}")
-            return False
-
-        try:
-            self._type_key(key_code)
-            return True
-        except Exception as e:
-            logger.error(f"Key press failed: {e}")
-            return False
 
     def set_typing_delay(self, delay: int) -> None:
         """Set typing delay.

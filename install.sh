@@ -71,10 +71,30 @@ if command -v gtk-update-icon-cache &> /dev/null; then
     gtk-update-icon-cache -f ~/.local/share/icons/hicolor 2>/dev/null || true
 fi
 
+# Add udev rules for /dev/uinput and add user to input group
+echo "Configuring permissions for /dev/uinput and input group..."
+# Add user to input group if not already there
+if ! groups | grep -q "\binput\b"; then
+    echo "Adding $USER to the 'input' group..."
+    sudo usermod -aG input "$USER"
+    echo "NOTE: You may need to log out and log back in for group changes to take effect."
+fi
+
+# Install udev rule for uinput if not already there
+UDEV_RULE_FILE="/etc/udev/rules.d/99-uinput.rules"
+if [ ! -f "$UDEV_RULE_FILE" ]; then
+    echo "Creating udev rule for /dev/uinput access..."
+    echo 'KERNEL=="uinput", GROUP="input", MODE="0660"' | sudo tee "$UDEV_RULE_FILE" > /dev/null
+    echo "Reloading udev rules..."
+    sudo udevadm control --reload-rules && sudo udevadm trigger
+    echo "udev rules updated."
+fi
+
 echo
 echo "========================================="
 echo "  Installation Complete!"
 echo "========================================="
+
 echo
 echo "Next steps:"
 echo "1. Run '$VENV_DIR/bin/typr' to start the application"
