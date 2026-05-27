@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
 )
 
 from typr.core.history import HistoryEntry, HistoryManager
+from typr.utils.i18n import tr
 
 
 class HistoryRowWidget(QWidget):
@@ -55,15 +56,15 @@ class HistoryRowWidget(QWidget):
         text_col.addWidget(self._snippet_label)
         layout.addLayout(text_col, 1)
 
-        self._copy_btn = QPushButton("Copy")
+        self._copy_btn = QPushButton(tr("history.row.copy", "Copy"))
         self._copy_btn.setFixedWidth(72)
-        self._copy_btn.setToolTip("Copy this transcription to the clipboard")
+        self._copy_btn.setToolTip(tr("history.row.copy_tooltip", "Copy this transcription to the clipboard"))
         self._copy_btn.clicked.connect(self._on_copy_clicked)
         layout.addWidget(self._copy_btn)
 
-        self._delete_btn = QPushButton("Delete")
+        self._delete_btn = QPushButton(tr("history.row.delete", "Delete"))
         self._delete_btn.setFixedWidth(72)
-        self._delete_btn.setToolTip("Delete this transcription from history")
+        self._delete_btn.setToolTip(tr("history.row.delete_tooltip", "Delete this transcription from history"))
         self._delete_btn.clicked.connect(lambda: self.delete_requested.emit(self._entry_id))
         layout.addWidget(self._delete_btn)
 
@@ -101,16 +102,16 @@ class HistoryRowWidget(QWidget):
         snippet = entry.text.strip().replace("\n", " ")
         if len(snippet) > 80:
             snippet = snippet[:77] + "..."
-        return snippet or "(empty)"
+        return snippet or tr("history.row.empty", "(empty)")
 
     def _on_copy_clicked(self) -> None:
         self.copy_requested.emit(self._entry_id)
-        self._copy_btn.setText("Copied!")
+        self._copy_btn.setText(tr("history.row.copied", "Copied!"))
         self._copy_btn.setEnabled(False)
         QTimer.singleShot(900, self._reset_copy_button)
 
     def _reset_copy_button(self) -> None:
-        self._copy_btn.setText("Copy")
+        self._copy_btn.setText(tr("history.row.copy", "Copy"))
         self._copy_btn.setEnabled(True)
 
     def sizeHint(self) -> QSize:
@@ -131,16 +132,16 @@ class HistoryDialog(QDialog):
         self._history.history_changed.connect(self._reload)
 
     def _setup_ui(self) -> None:
-        self.setWindowTitle("Typr History")
+        self.setWindowTitle(tr("history.title", "Typr History"))
         self.resize(820, 540)
 
         layout = QVBoxLayout(self)
 
         # Search bar
         search_row = QHBoxLayout()
-        search_row.addWidget(QLabel("Search:"))
+        search_row.addWidget(QLabel(tr("history.search", "Search:")))
         self._search_edit = QLineEdit()
-        self._search_edit.setPlaceholderText("Filter by text...")
+        self._search_edit.setPlaceholderText(tr("history.search_placeholder", "Filter by text..."))
         self._search_edit.textChanged.connect(self._apply_filter)
         search_row.addWidget(self._search_edit)
         layout.addLayout(search_row)
@@ -164,11 +165,11 @@ class HistoryDialog(QDialog):
 
         self._preview = QTextEdit()
         self._preview.setReadOnly(True)
-        self._preview.setPlaceholderText("Select an entry to view the full transcription")
+        self._preview.setPlaceholderText(tr("history.preview_placeholder", "Select an entry to view the full transcription"))
         right_layout.addWidget(self._preview)
 
         preview_btn_row = QHBoxLayout()
-        self._copy_preview_btn = QPushButton("Copy full text")
+        self._copy_preview_btn = QPushButton(tr("history.copy_preview", "Copy full text"))
         self._copy_preview_btn.clicked.connect(self._copy_selected)
         preview_btn_row.addWidget(self._copy_preview_btn)
         preview_btn_row.addStretch()
@@ -183,11 +184,11 @@ class HistoryDialog(QDialog):
         btn_row = QHBoxLayout()
         btn_row.addStretch()
 
-        self._clear_btn = QPushButton("Clear All...")
+        self._clear_btn = QPushButton(tr("history.clear_all", "Clear All..."))
         self._clear_btn.clicked.connect(self._clear_all)
         btn_row.addWidget(self._clear_btn)
 
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton(tr("history.close", "Close"))
         close_btn.clicked.connect(self.accept)
         btn_row.addWidget(close_btn)
         layout.addLayout(btn_row)
@@ -233,7 +234,7 @@ class HistoryDialog(QDialog):
         if self._list.count() == 0:
             self._preview.clear()
             self._meta_label.setText(
-                "No entries match." if query else "No history yet."
+                tr("history.no_matches", "No entries match.") if query else tr("history.no_history", "No history yet.")
             )
 
     def _current_entry_id(self) -> Optional[str]:
@@ -312,8 +313,8 @@ class HistoryDialog(QDialog):
             return
         confirm = QMessageBox.question(
             self,
-            "Delete entry",
-            "Delete this transcription from history?",
+            tr("history.delete_confirm.title", "Delete entry"),
+            tr("history.delete_confirm.msg", "Delete this transcription from history?"),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -324,8 +325,8 @@ class HistoryDialog(QDialog):
     def _clear_all(self) -> None:
         confirm = QMessageBox.question(
             self,
-            "Clear history",
-            "Permanently delete all transcription history?",
+            tr("history.clear_confirm.title", "Clear history"),
+            tr("history.clear_confirm.msg", "Permanently delete all transcription history?"),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )

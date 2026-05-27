@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
 
 from typr.config import AppConfig
 from typr.utils.logger import logger
+from typr.utils.i18n import tr
 
 
 class SettingsDialog(QDialog):
@@ -65,19 +66,19 @@ class SettingsDialog(QDialog):
 
     def _setup_ui(self) -> None:
         """Set up the dialog UI."""
-        self.setWindowTitle("Typr Settings")
+        self.setWindowTitle(tr("settings.title", "Typr Settings"))
         self.setMinimumSize(500, 450)
 
         layout = QVBoxLayout(self)
 
         # Tab widget
         tabs = QTabWidget()
-        tabs.addTab(self._create_general_tab(), "General")
-        tabs.addTab(self._create_api_tab(), "API")
-        tabs.addTab(self._create_hotkeys_tab(), "Hotkeys")
-        tabs.addTab(self._create_audio_tab(), "Audio")
-        tabs.addTab(self._create_history_tab(), "History")
-        tabs.addTab(self._create_about_tab(), "About")
+        tabs.addTab(self._create_general_tab(), tr("settings.tabs.general", "General"))
+        tabs.addTab(self._create_api_tab(), tr("settings.tabs.api", "API"))
+        tabs.addTab(self._create_hotkeys_tab(), tr("settings.tabs.hotkeys", "Hotkeys"))
+        tabs.addTab(self._create_audio_tab(), tr("settings.tabs.audio", "Audio"))
+        tabs.addTab(self._create_history_tab(), tr("settings.tabs.history", "History"))
+        tabs.addTab(self._create_about_tab(), tr("settings.tabs.about", "About"))
         layout.addWidget(tabs)
 
         # Buttons
@@ -99,7 +100,7 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(widget)
 
         # Transcription settings
-        trans_group = QGroupBox("Transcription")
+        trans_group = QGroupBox(tr("settings.general.transcription", "Transcription"))
         trans_layout = QFormLayout(trans_group)
 
         # Model selection with fetch button
@@ -110,34 +111,34 @@ class SettingsDialog(QDialog):
             self._model_combo.addItem(model_name, model_id)
         model_layout.addWidget(self._model_combo, 1)
 
-        self._fetch_models_btn = QPushButton("Fetch")
-        self._fetch_models_btn.setToolTip("Fetch available models from API endpoint")
+        self._fetch_models_btn = QPushButton(tr("settings.general.fetch", "Fetch"))
+        self._fetch_models_btn.setToolTip(tr("settings.general.fetch_tooltip", "Fetch available models from API endpoint"))
         self._fetch_models_btn.clicked.connect(self._fetch_models)
         model_layout.addWidget(self._fetch_models_btn)
-        trans_layout.addRow("Model:", model_layout)
+        trans_layout.addRow(tr("settings.general.model", "Model:"), model_layout)
 
         # Language selection
         self._language_combo = QComboBox()
         for lang_code, lang_name in self.LANGUAGES:
             self._language_combo.addItem(lang_name, lang_code)
-        trans_layout.addRow("Language:", self._language_combo)
+        trans_layout.addRow(tr("settings.general.language", "Language:"), self._language_combo)
 
         # Context prompt
         self._prompt_edit = QTextEdit()
         self._prompt_edit.setMaximumHeight(80)
         self._prompt_edit.setPlaceholderText(
-            "Optional context to improve accuracy (e.g., technical terms, names)"
+            tr("settings.general.context_placeholder", "Optional context to improve accuracy (e.g., technical terms, names)")
         )
-        trans_layout.addRow("Context:", self._prompt_edit)
+        trans_layout.addRow(tr("settings.general.context", "Context:"), self._prompt_edit)
 
         layout.addWidget(trans_group)
 
         # UI settings
-        ui_group = QGroupBox("User Interface")
+        ui_group = QGroupBox(tr("settings.general.ui", "User Interface"))
         ui_layout = QFormLayout(ui_group)
 
         # Notifications
-        self._notifications_check = QCheckBox("Show notifications")
+        self._notifications_check = QCheckBox(tr("settings.general.show_notifications", "Show notifications"))
         ui_layout.addRow(self._notifications_check)
 
         # Notification duration
@@ -145,7 +146,7 @@ class SettingsDialog(QDialog):
         self._notif_duration_spin.setRange(1000, 10000)
         self._notif_duration_spin.setSingleStep(500)
         self._notif_duration_spin.setSuffix(" ms")
-        ui_layout.addRow("Notification duration:", self._notif_duration_spin)
+        ui_layout.addRow(tr("settings.general.notification_duration", "Notification duration:"), self._notif_duration_spin)
 
 
 
@@ -160,31 +161,31 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(widget)
 
         # API settings
-        api_group = QGroupBox("OpenAI API")
+        api_group = QGroupBox(tr("settings.api.group", "OpenAI API"))
         api_layout = QFormLayout(api_group)
 
         # API key
         self._api_key_edit = QLineEdit()
         self._api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self._api_key_edit.setPlaceholderText("sk-...")
-        api_layout.addRow("API Key:", self._api_key_edit)
+        self._api_key_edit.setPlaceholderText(tr("settings.api.key_placeholder", "sk-..."))
+        api_layout.addRow(tr("settings.api.key", "API Key:"), self._api_key_edit)
 
         # Show/hide API key button
         key_layout = QHBoxLayout()
-        self._show_key_btn = QPushButton("Show")
+        self._show_key_btn = QPushButton(tr("settings.api.key_show", "Show"))
         self._show_key_btn.setCheckable(True)
         self._show_key_btn.toggled.connect(self._toggle_api_key_visibility)
         key_layout.addWidget(self._api_key_edit)
         key_layout.addWidget(self._show_key_btn)
-        api_layout.addRow("API Key:", key_layout)
+        api_layout.addRow(tr("settings.api.key", "API Key:"), key_layout)
 
         # API base URL
         self._api_base_edit = QLineEdit()
-        self._api_base_edit.setPlaceholderText("https://api.openai.com/v1")
-        api_layout.addRow("Base URL:", self._api_base_edit)
+        self._api_base_edit.setPlaceholderText(tr("settings.api.base_url_placeholder", "https://api.openai.com/v1"))
+        api_layout.addRow(tr("settings.api.base_url", "Base URL:"), self._api_base_edit)
 
         # Test connection button
-        test_btn = QPushButton("Test Connection")
+        test_btn = QPushButton(tr("settings.api.test_connection", "Test Connection"))
         test_btn.clicked.connect(self._test_connection)
         api_layout.addRow("", test_btn)
 
@@ -196,7 +197,7 @@ class SettingsDialog(QDialog):
 
         # Info
         info_label = QLabel(
-            "Get your API key from <a href='https://platform.openai.com/api-keys'>OpenAI Platform</a>"
+            tr("settings.api.info", "Get your API key from <a href='https://platform.openai.com/api-keys'>OpenAI Platform</a>")
         )
         info_label.setOpenExternalLinks(True)
         layout.addWidget(info_label)
@@ -211,23 +212,22 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(widget)
 
         # Hotkey settings
-        hotkey_group = QGroupBox("Keyboard Shortcuts")
+        hotkey_group = QGroupBox(tr("settings.hotkeys.group", "Keyboard Shortcuts"))
         hotkey_layout = QFormLayout(hotkey_group)
 
         # Push-to-talk hotkey
         self._ptt_hotkey_edit = QKeySequenceEdit()
-        hotkey_layout.addRow("Push-to-Talk:", self._ptt_hotkey_edit)
+        hotkey_layout.addRow(tr("settings.hotkeys.ptt", "Push-to-Talk:"), self._ptt_hotkey_edit)
 
         # Cancel hotkey
         self._cancel_hotkey_edit = QKeySequenceEdit()
-        hotkey_layout.addRow("Cancel Recording:", self._cancel_hotkey_edit)
+        hotkey_layout.addRow(tr("settings.hotkeys.cancel", "Cancel Recording:"), self._cancel_hotkey_edit)
 
         layout.addWidget(hotkey_group)
 
         # Info
         info_label = QLabel(
-            "Note: Hotkeys are registered with KDE's global shortcut system. "
-            "You can also configure them in System Settings > Shortcuts."
+            tr("settings.hotkeys.info", "Note: Hotkeys are registered directly with your input devices via evdev.")
         )
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
@@ -242,30 +242,30 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(widget)
 
         # Audio settings
-        audio_group = QGroupBox("Audio Input")
+        audio_group = QGroupBox(tr("settings.audio.group", "Audio Input"))
         audio_layout = QFormLayout(audio_group)
 
         # Input device
         self._device_combo = QComboBox()
-        self._device_combo.addItem("Default", None)
-        audio_layout.addRow("Input Device:", self._device_combo)
+        self._device_combo.addItem(tr("settings.audio.device_default", "Default"), None)
+        audio_layout.addRow(tr("settings.audio.device", "Input Device:"), self._device_combo)
 
         # Refresh devices button
-        refresh_btn = QPushButton("Refresh Devices")
+        refresh_btn = QPushButton(tr("settings.audio.refresh", "Refresh Devices"))
         refresh_btn.clicked.connect(self._refresh_devices)
         audio_layout.addRow("", refresh_btn)
 
         # Sample rate (read-only info)
-        sample_info = QLabel("16000 Hz (optimal for Whisper)")
-        audio_layout.addRow("Sample Rate:", sample_info)
+        sample_info = QLabel(tr("settings.audio.sample_rate_val", "16000 Hz (optimal for Whisper)"))
+        audio_layout.addRow(tr("settings.audio.sample_rate", "Sample Rate:"), sample_info)
 
         layout.addWidget(audio_group)
 
         # Test recording
-        test_group = QGroupBox("Test Recording")
+        test_group = QGroupBox(tr("settings.audio.test_group", "Test Recording"))
         test_layout = QVBoxLayout(test_group)
 
-        test_btn = QPushButton("Test Microphone")
+        test_btn = QPushButton(tr("settings.audio.test_btn", "Test Microphone"))
         test_btn.clicked.connect(self._test_microphone)
         test_layout.addWidget(test_btn)
 
@@ -285,23 +285,22 @@ class SettingsDialog(QDialog):
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
-        history_group = QGroupBox("Transcription History")
+        history_group = QGroupBox(tr("settings.history.group", "Transcription History"))
         history_layout = QFormLayout(history_group)
 
-        self._history_enabled_check = QCheckBox("Save transcription history")
+        self._history_enabled_check = QCheckBox(tr("settings.history.enabled", "Save transcription history"))
         history_layout.addRow(self._history_enabled_check)
 
         self._history_max_spin = QSpinBox()
         self._history_max_spin.setRange(10, 10000)
         self._history_max_spin.setSingleStep(50)
-        self._history_max_spin.setSuffix(" entries")
-        history_layout.addRow("Max entries:", self._history_max_spin)
+        self._history_max_spin.setSuffix(f" {tr('settings.history.entries_suffix', 'entries')}")
+        history_layout.addRow(tr("settings.history.max", "Max entries:"), self._history_max_spin)
 
         layout.addWidget(history_group)
 
         info_label = QLabel(
-            "History is stored locally at <code>~/.local/share/typr/history.json</code>. "
-            "Open the History window from the tray icon to browse and copy past transcriptions."
+            tr("settings.history.info", "History is stored locally at <code>~/.local/share/typr/history.json</code>. Open the History window from the tray icon to browse and copy past transcriptions.")
         )
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
@@ -319,11 +318,11 @@ class SettingsDialog(QDialog):
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
-        version = QLabel("Version 0.1.0")
+        version = QLabel(tr("settings.about.version", "Version 0.1.0"))
         version.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(version)
 
-        desc = QLabel("Speech-to-text for Linux using OpenAI and Parakeet-compatible APIs")
+        desc = QLabel(tr("settings.about.desc", "Speech-to-text for Linux using OpenAI and Parakeet-compatible APIs"))
         desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(desc)
 
@@ -432,10 +431,10 @@ class SettingsDialog(QDialog):
         """Toggle API key visibility."""
         if show:
             self._api_key_edit.setEchoMode(QLineEdit.EchoMode.Normal)
-            self._show_key_btn.setText("Hide")
+            self._show_key_btn.setText(tr("settings.api.key_hide", "Hide"))
         else:
             self._api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
-            self._show_key_btn.setText("Show")
+            self._show_key_btn.setText(tr("settings.api.key_show", "Show"))
 
     def _fetch_models(self) -> None:
         """Fetch available models from the API endpoint."""
@@ -497,7 +496,11 @@ class SettingsDialog(QDialog):
                         models.append(model.get("id", model.get("name", "")))
 
             if not models:
-                QMessageBox.warning(self, "No Models", "No models found at this endpoint")
+                QMessageBox.warning(
+                    self,
+                    tr("settings.fetch.no_models.title", "No Models"),
+                    tr("settings.fetch.no_models.msg", "No models found at this endpoint")
+                )
                 return
 
             # Update combo box
@@ -512,32 +515,40 @@ class SettingsDialog(QDialog):
                 self._model_combo.setCurrentIndex(index)
 
             QMessageBox.information(
-                self, "Models Loaded", f"Found {len(models)} model(s)"
+                self,
+                tr("settings.fetch.success.title", "Models Loaded"),
+                tr("settings.fetch.success.msg", "Found {count} model(s)").format(count=len(models))
             )
 
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 QMessageBox.warning(
                     self,
-                    "Error",
-                    "Model list endpoint not found. Check Base URL in API settings.",
+                    tr("settings.fetch.err.title", "Error"),
+                    tr("settings.fetch.err_404", "Model list endpoint not found. Check Base URL in API settings."),
                 )
                 return
             QMessageBox.warning(
-                self, "Error", f"API error: {e.response.status_code}\n{e.response.text[:200]}"
+                self,
+                tr("settings.fetch.err.title", "Error"),
+                tr("settings.fetch.err_api", "API error: {status}\n{text}").format(status=e.response.status_code, text=e.response.text[:200]),
             )
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to fetch models: {e}")
+            QMessageBox.warning(
+                self,
+                tr("settings.fetch.err.title", "Error"),
+                tr("settings.fetch.err_generic", "Failed to fetch models: {error}").format(error=e)
+            )
         finally:
             self._fetch_models_btn.setEnabled(True)
-            self._fetch_models_btn.setText("Fetch")
+            self._fetch_models_btn.setText(tr("settings.general.fetch", "Fetch"))
 
     def _test_connection(self) -> None:
         """Test API connection."""
         api_key = self._api_key_edit.text()
         base_url = (self._api_base_edit.text() or "https://api.openai.com/v1").rstrip("/")
         self._api_test_status.setStyleSheet("")
-        self._api_test_status.setText("Checking connection...")
+        self._api_test_status.setText(tr("settings.api.test.checking", "Checking connection..."))
 
         try:
             import httpx
@@ -564,38 +575,38 @@ class SettingsDialog(QDialog):
                         probe.raise_for_status()
                     self._set_api_test_status(
                         True,
-                        "Settings are valid: transcription endpoint is available.",
+                        tr("settings.api.test.valid_transcribe", "Settings are valid: transcription endpoint is available."),
                     )
                     return
 
                 response.raise_for_status()
 
-            self._set_api_test_status(True, "Settings are valid.")
+            self._set_api_test_status(True, tr("settings.api.test.valid", "Settings are valid."))
 
         except httpx.HTTPStatusError as e:
             status = e.response.status_code
             details = e.response.text[:200].strip()
             if status == 401:
-                msg = "Error 401: API key is missing or invalid."
+                msg = tr("settings.api.test.err_401", "Error 401: API key is missing or invalid.")
             elif status == 403:
-                msg = "Error 403: access denied (check API key and permissions)."
+                msg = tr("settings.api.test.err_403", "Error 403: access denied (check API key and permissions).")
             elif status == 404:
-                msg = "Error 404: endpoint not found (check Base URL)."
+                msg = tr("settings.api.test.err_404", "Error 404: endpoint not found (check Base URL).")
             elif status == 429:
-                msg = "Error 429: rate limit exceeded."
+                msg = tr("settings.api.test.err_429", "Error 429: rate limit exceeded.")
             elif 500 <= status <= 599:
-                msg = "Server error (5xx): issue on API side."
+                msg = tr("settings.api.test.err_5xx", "Server error (5xx): issue on API side.")
             else:
-                msg = f"API error {status}."
+                msg = tr("settings.api.test.err_generic", "API error {status}.").format(status=status)
             if details:
                 msg = f"{msg}\n{details}"
             self._set_api_test_status(False, msg)
         except httpx.TimeoutException:
-            self._set_api_test_status(False, "Timeout: server did not respond in time.")
+            self._set_api_test_status(False, tr("settings.api.test.timeout", "Timeout: server did not respond in time."))
         except httpx.NetworkError as e:
-            self._set_api_test_status(False, f"Network error: {e}")
+            self._set_api_test_status(False, tr("settings.api.test.network_err", "Network error: {error}").format(error=e))
         except Exception as e:
-            self._set_api_test_status(False, f"Connection error: {e}")
+            self._set_api_test_status(False, tr("settings.api.test.conn_err", "Connection error: {error}").format(error=e))
 
     def _set_api_test_status(self, success: bool, message: str) -> None:
         """Show API test status under the test button."""
@@ -630,7 +641,7 @@ class SettingsDialog(QDialog):
 
     def _test_microphone(self) -> None:
         """Test microphone recording."""
-        self._test_status.setText("Recording for 2 seconds...")
+        self._test_status.setText(tr("settings.audio.test_status_recording", "Recording for 2 seconds..."))
 
         try:
             from PyQt6.QtCore import QTimer
@@ -646,12 +657,12 @@ class SettingsDialog(QDialog):
 
                 if audio_data and len(audio_data) > 1000:
                     self._test_status.setText(
-                        f"Success! Recorded {len(audio_data)} bytes"
+                        tr("settings.audio.test_status_success", "Success! Recorded {bytes} bytes").format(bytes=len(audio_data))
                     )
                 else:
-                    self._test_status.setText("Recording too short or empty")
+                    self._test_status.setText(tr("settings.audio.test_status_fail", "Recording too short or empty"))
 
             QTimer.singleShot(2000, stop_recording)
 
         except Exception as e:
-            self._test_status.setText(f"Error: {e}")
+            self._test_status.setText(tr("settings.audio.test_status_error", "Error: {error}").format(error=e))

@@ -8,6 +8,7 @@ from PyQt6.QtGui import QAction, QIcon
 from PyQt6.QtWidgets import QMenu, QSystemTrayIcon, QWidget
 
 from typr.utils.logger import logger
+from typr.utils.i18n import tr
 
 
 class TrayState(Enum):
@@ -104,33 +105,33 @@ class TrayIcon(QSystemTrayIcon):
         menu = QMenu()
 
         # Record button (main action)
-        self._record_action = QAction("Start Recording", menu)
+        self._record_action = QAction(tr("tray.start_recording", "Start Recording"), menu)
         self._record_action.triggered.connect(self._on_record_clicked)
         menu.addAction(self._record_action)
 
         menu.addSeparator()
 
         # Status indicator
-        self._status_action = QAction("Status: Ready", menu)
+        self._status_action = QAction(f"{tr('tray.status_ready', 'Status: Ready')}", menu)
         self._status_action.setEnabled(False)
         menu.addAction(self._status_action)
 
         menu.addSeparator()
 
         # History
-        history_action = QAction("History...", menu)
+        history_action = QAction(tr("tray.menu.history", "History..."), menu)
         history_action.triggered.connect(self.history_requested.emit)
         menu.addAction(history_action)
 
         # Settings
-        settings_action = QAction("Settings...", menu)
+        settings_action = QAction(tr("tray.menu.settings", "Settings..."), menu)
         settings_action.triggered.connect(self.settings_requested.emit)
         menu.addAction(settings_action)
 
         menu.addSeparator()
 
         # Quit
-        quit_action = QAction("Quit", menu)
+        quit_action = QAction(tr("tray.menu.quit", "Quit"), menu)
         quit_action.triggered.connect(self.quit_requested.emit)
         menu.addAction(quit_action)
 
@@ -170,20 +171,30 @@ class TrayIcon(QSystemTrayIcon):
             self._status_message = message
         else:
             self._status_message = {
-                TrayState.IDLE: "Ready",
-                TrayState.RECORDING: "Recording",
-                TrayState.PROCESSING: "Transcribing",
-                TrayState.ERROR: "Error",
-            }.get(state, "Unknown")
+                TrayState.IDLE: tr("tray.status.ready", "Ready"),
+                TrayState.RECORDING: tr("tray.status.recording", "Recording"),
+                TrayState.PROCESSING: tr("tray.status.transcribing", "Transcribing"),
+                TrayState.ERROR: tr("tray.status.error", "Error"),
+            }.get(state, tr("tray.status.unknown", "Unknown"))
 
         # Update menu status
-        self._status_action.setText(f"Status: {self._status_message}")
+        status_label = {
+            TrayState.IDLE: tr("tray.status_ready", "Status: Ready"),
+            TrayState.RECORDING: tr("tray.status_recording", "Status: Recording"),
+            TrayState.PROCESSING: tr("tray.status_transcribing", "Status: Transcribing"),
+            TrayState.ERROR: tr("tray.status_error", "Status: Error"),
+        }.get(state, f"Status: {self._status_message}")
+        
+        if message:
+            status_label = f"{tr('tray.status.error', 'Error')}: {message}" if state == TrayState.ERROR else status_label
+
+        self._status_action.setText(status_label)
 
         # Update record action text
         if state == TrayState.RECORDING:
-            self._record_action.setText("Stop Recording")
+            self._record_action.setText(tr("tray.stop_recording", "Stop Recording"))
         else:
-            self._record_action.setText("Start Recording")
+            self._record_action.setText(tr("tray.start_recording", "Start Recording"))
 
         # Disable record during processing
         self._record_action.setEnabled(state in (TrayState.IDLE, TrayState.RECORDING))
@@ -195,8 +206,21 @@ class TrayIcon(QSystemTrayIcon):
 
     def _update_tooltip(self) -> None:
         """Update the tooltip text."""
-        tooltip = self.STATE_TOOLTIPS.get(self._state, "Typr")
-        tooltip = tooltip.format(hotkey=self._hotkey)
+        tooltip_key = {
+            TrayState.IDLE: "tray.ready",
+            TrayState.RECORDING: "tray.recording",
+            TrayState.PROCESSING: "tray.transcribing",
+            TrayState.ERROR: "tray.error",
+        }.get(self._state, "tray.status.unknown")
+        
+        default_val = {
+            TrayState.IDLE: "Ready - Hold {hotkey} to record",
+            TrayState.RECORDING: "Recording... Release to stop",
+            TrayState.PROCESSING: "Transcribing...",
+            TrayState.ERROR: "Error - Right-click for options",
+        }.get(self._state, "Typr")
+
+        tooltip = tr(tooltip_key, default_val).format(hotkey=self._hotkey)
         self.setToolTip(tooltip)
 
     def set_hotkey(self, hotkey: str) -> None:
@@ -241,7 +265,7 @@ class TrayIcon(QSystemTrayIcon):
         """
         self.set_state(TrayState.ERROR, message)
         self.show_notification(
-            "Typr Error", message, QSystemTrayIcon.MessageIcon.Critical
+            tr("tray.notification.error.title", "Typr Error"), message, QSystemTrayIcon.MessageIcon.Critical
         )
 
     def get_state(self) -> TrayState:

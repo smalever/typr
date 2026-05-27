@@ -14,6 +14,7 @@ from typr.core.text_injector import TextInjector
 from typr.core.transcriber import WhisperTranscriber
 from typr.ui.tray_icon import TrayIcon, TrayState
 from typr.utils.logger import logger
+from typr.utils.i18n import tr
 
 
 class AppState(Enum):
@@ -115,24 +116,24 @@ class TyprApp(QObject):
         # Check for text injection support
         if not self.text_injector.is_available():
             self.tray_icon.show_notification(
-                "Typr",
-                "Text injection unavailable. Check /dev/uinput access and clipboard tools.",
+                tr("app.notify.error_title", "Typr Error"),
+                tr("app.notify.text_injection_unavailable", "Text injection unavailable. Check /dev/uinput access and clipboard tools."),
                 self.tray_icon.MessageIcon.Warning,
             )
 
         # Initialize hotkeys
         if not self.hotkey_manager.initialize():
             self.tray_icon.show_notification(
-                "Typr",
-                "Could not register hotkey. Check Settings for manual configuration.",
+                tr("app.notify.error_title", "Typr Error"),
+                tr("app.notify.hotkey_register_failed", "Could not register hotkey. Check Settings for manual configuration."),
                 self.tray_icon.MessageIcon.Warning,
             )
 
         # Show tray icon
         self.tray_icon.show()
         self.tray_icon.show_notification(
-            "Typr Started",
-            f"Hold {self.config.hotkeys.push_to_talk} to record",
+            tr("app.notify.started.title", "Typr Started"),
+            tr("app.notify.started.msg", "Hold {hotkey} to record").format(hotkey=self.config.hotkeys.push_to_talk),
             self.tray_icon.MessageIcon.Information,
             2000,
         )
@@ -146,7 +147,7 @@ class TyprApp(QObject):
 
         self._set_state(AppState.RECORDING)
         if not self.audio_recorder.start_recording():
-            self._set_state(AppState.ERROR, "Failed to start recording")
+            self._set_state(AppState.ERROR, tr("app.notify.recording_start_failed", "Failed to start recording"))
 
     @pyqtSlot()
     def _on_recording_stop(self) -> None:
@@ -162,7 +163,7 @@ class TyprApp(QObject):
     def _on_audio_ready(self, audio_data: bytes) -> None:
         """Handle completed audio recording."""
         if not audio_data:
-            self._set_state(AppState.IDLE, "No audio recorded")
+            self._set_state(AppState.IDLE, tr("app.notify.no_audio", "No audio recorded"))
             return
 
         logger.info(f"Audio ready: {len(audio_data)} bytes")
@@ -184,13 +185,13 @@ class TyprApp(QObject):
         if self.text_injector.type_text(text):
             if self.config.ui.show_notifications:
                 self.tray_icon.show_notification(
-                    "Transcription Complete",
+                    tr("app.notify.transcription_complete", "Transcription Complete"),
                     text[:100] + ("..." if len(text) > 100 else ""),
                     self.tray_icon.MessageIcon.Information,
                     self.config.ui.notification_duration,
                 )
         else:
-            self._set_state(AppState.ERROR, "Failed to type text")
+            self._set_state(AppState.ERROR, tr("app.notify.type_failed", "Failed to type text"))
             return
 
         self._set_state(AppState.IDLE)
