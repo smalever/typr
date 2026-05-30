@@ -62,6 +62,40 @@ if [ -d "$VENV_DIR" ]; then
     echo "Virtual environment removed."
 fi
 
+# Optional cleanup for local STT container (Parakeet)
+PARAKEET_DIR="${HOME:-$(getent passwd "$USER" | cut -d: -f6)}/docker/parakeet-tdt"
+if [ -d "$PARAKEET_DIR" ]; then
+    echo
+    read -rp "Would you like to remove the local Parakeet STT Docker container? [y/N]: " stt_yr
+    stt_yr=${stt_yr:-n}
+    if [[ "$stt_yr" =~ ^[Yy]$ ]]; then
+        COMPOSE_CMD=()
+        if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+            COMPOSE_CMD=(docker compose)
+        elif command -v docker-compose >/dev/null 2>&1; then
+            COMPOSE_CMD=(docker-compose)
+        fi
+
+        if [ ${#COMPOSE_CMD[@]} -gt 0 ]; then
+            echo "Stopping and removing Parakeet container..."
+            if ! (cd "$PARAKEET_DIR" && "${COMPOSE_CMD[@]}" down); then
+                echo "Docker access may require sudo. Retrying with sudo..."
+                sudo -v
+                (cd "$PARAKEET_DIR" && sudo "${COMPOSE_CMD[@]}" down) || true
+            fi
+        else
+            echo "Docker compose not found, skipping container shutdown."
+        fi
+
+        read -rp "Also remove Parakeet repository directory '$PARAKEET_DIR' (including models)? [y/N]: " stt_rm_dir
+        stt_rm_dir=${stt_rm_dir:-n}
+        if [[ "$stt_rm_dir" =~ ^[Yy]$ ]]; then
+            rm -rf "$PARAKEET_DIR"
+            echo "Removed: $PARAKEET_DIR"
+        fi
+    fi
+fi
+
 # Clean up udev rules interactively
 UDEV_RULE_FILE="/etc/udev/rules.d/99-uinput.rules"
 if [ -f "$UDEV_RULE_FILE" ]; then
