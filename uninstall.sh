@@ -1,11 +1,20 @@
 #!/bin/bash
-# Typr Uninstall Script for Arch/CachyOS
+# Typr Uninstall Script for Linux
 
 set -euo pipefail
 
 echo "========================================="
 echo "  Typr Uninstaller"
 echo "========================================="
+echo
+
+# 1. Detect Operating System for informational output
+OS_NAME="Unknown Linux"
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    OS_NAME=${NAME:-"Unknown Linux"}
+fi
+echo "Running on: $OS_NAME"
 echo
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,12 +24,16 @@ echo "Stopping running Typr processes (if any)..."
 pkill -f "$VENV_DIR/bin/typr" 2>/dev/null || true
 pkill -x typr 2>/dev/null || true
 pkill -x typr-gui 2>/dev/null || true
+pkill -f "python.* -m typr" 2>/dev/null || true
+pkill -f "python.*src/typr" 2>/dev/null || true
 sleep 1
 
 # Force stop only if still running.
 pkill -9 -f "$VENV_DIR/bin/typr" 2>/dev/null || true
 pkill -9 -x typr 2>/dev/null || true
 pkill -9 -x typr-gui 2>/dev/null || true
+pkill -9 -f "python.* -m typr" 2>/dev/null || true
+pkill -9 -f "python.*src/typr" 2>/dev/null || true
 
 echo "Removing desktop integration files..."
 rm -f ~/.local/share/applications/org.typr.desktop
@@ -49,6 +62,23 @@ if [ -d "$VENV_DIR" ]; then
     echo "Virtual environment removed."
 fi
 
+# Clean up udev rules interactively
+UDEV_RULE_FILE="/etc/udev/rules.d/99-uinput.rules"
+if [ -f "$UDEV_RULE_FILE" ]; then
+    echo
+    read -rp "Would you like to remove the custom udev rule for /dev/uinput access ($UDEV_RULE_FILE)? [y/N]: " yr
+    yr=${yr:-n}
+    if [[ "$yr" =~ ^[Yy]$ ]]; then
+        echo "Removing udev rule (may require sudo)..."
+        sudo rm -f "$UDEV_RULE_FILE"
+        echo "Reloading udev rules..."
+        if command -v udevadm &>/dev/null; then
+            sudo udevadm control --reload-rules && sudo udevadm trigger
+        fi
+        echo "udev rules updated."
+    fi
+fi
+
 echo
 echo "========================================="
 echo "  Uninstall Complete"
@@ -57,3 +87,11 @@ echo
 echo "Kept intact:"
 echo "- Project repository directory: $SCRIPT_DIR"
 echo
+
+# Inform about group membership
+if groups | grep -q "\binput\b"; then
+    echo "Note: Your user is still a member of the 'input' group."
+    echo "If you wish to remove yourself from this group, you can run:"
+    echo "  sudo gpasswd -d $USER input"
+    echo
+fi
