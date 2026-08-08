@@ -493,7 +493,7 @@ fi
 # Install Python package
 msg install_py "$VENV_DIR"
 "$VENV_PIP" install --upgrade pip
-"$VENV_PIP" install -e "$SCRIPT_DIR"
+"$VENV_PIP" install -e "$SCRIPT_DIR[dev]"
 
 echo
 

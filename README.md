@@ -8,7 +8,7 @@
 <p align="center">
   <a href="https://opensource.org/licenses/MIT"><img alt="Лицензия MIT" src="https://img.shields.io/badge/License-MIT-blue.svg"></a>
   <a href="https://www.python.org/downloads/"><img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10+-blue.svg"></a>
-  <a href="https://github.com/smalever/typr/releases/latest"><img alt="Последняя версия" src="https://img.shields.io/badge/version-0.2.1-brightgreen.svg"></a>
+  <a href="https://github.com/smalever/typr/releases/latest"><img alt="Последняя версия" src="https://img.shields.io/badge/version-0.2.2-brightgreen.svg"></a>
 </p>
 
 <p align="center">
@@ -89,7 +89,7 @@
 - покажет список отсутствующих пакетов и попросит одно подтверждение;
 - запросит `sudo` только перед реальной установкой;
 - предложит опционально развернуть локальный STT-контейнер Parakeet;
-- настроит Python venv, desktop entries и `udev`-правила.
+- настроит Python venv с `pytest` и `ruff`, desktop entries и `udev`-правила.
 
 ```bash
 # Клонируйте репозиторий

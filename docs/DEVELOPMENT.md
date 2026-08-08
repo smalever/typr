@@ -6,7 +6,7 @@
 
 ## Окружение
 
-Проект требует Python 3.10+ и использует `hatchling`, PyQt6, PyAudio, httpx и evdev. `install.sh` создает проектное окружение `.venv` и устанавливает package в editable mode.
+Проект требует Python 3.10+ и использует `hatchling`, PyQt6, PyAudio, httpx и evdev. `install.sh` создает проектное окружение `.venv` и устанавливает package в editable mode вместе с dev-зависимостями, включая `pytest` и `ruff`.
 
 Для разработки с уже созданным окружением:
 

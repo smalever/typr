@@ -87,3 +87,9 @@ def test_application_versions_are_synchronized() -> None:
         text=True,
     )
     assert result.stdout.strip() == expected
+
+
+def test_installer_includes_development_dependencies() -> None:
+    installer = (PROJECT_ROOT / "install.sh").read_text(encoding="utf-8")
+
+    assert '"$VENV_PIP" install -e "$SCRIPT_DIR[dev]"' in installer
