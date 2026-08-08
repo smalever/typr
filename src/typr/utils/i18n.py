@@ -1,31 +1,31 @@
 """Internationalization (i18n) helper for Typr."""
 
 import locale
-from typing import Any, Optional
 
 try:
     from PyQt6.QtCore import QLocale
+
     PYQT_AVAILABLE = True
 except ImportError:
     PYQT_AVAILABLE = False
 
 
 # Determine system language: 'ru' if Russian, else 'en'
-lang = 'en'
+lang = "en"
 
 if PYQT_AVAILABLE:
     try:
         sys_locale = QLocale.system().name()
-        if sys_locale.lower().startswith('ru'):
-            lang = 'ru'
+        if sys_locale.lower().startswith("ru"):
+            lang = "ru"
     except Exception:
         pass
 
-if lang == 'en':
+if lang == "en":
     try:
         default_locale, _ = locale.getdefaultlocale()
-        if default_locale and default_locale.lower().startswith('ru'):
-            lang = 'ru'
+        if default_locale and default_locale.lower().startswith("ru"):
+            lang = "ru"
     except Exception:
         pass
 
@@ -53,10 +53,13 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "tray.status.error": "Error",
         "tray.status.unknown": "Unknown",
         "tray.notification.error.title": "Typr Error",
-        
         # Notifications in App
-        "app.notify.text_injection_unavailable": "Text injection unavailable. Check /dev/uinput access and clipboard tools.",
-        "app.notify.hotkey_register_failed": "Could not register hotkey. Check Settings for manual configuration.",
+        "app.notify.text_injection_unavailable": (
+            "Text injection unavailable. Check /dev/uinput access and clipboard tools."
+        ),
+        "app.notify.hotkey_register_failed": (
+            "Could not register hotkey. Check Settings for manual configuration."
+        ),
         "app.notify.started.title": "Typr Started",
         "app.notify.started.msg": "Hold {hotkey} to record",
         "app.notify.recording_start_failed": "Failed to start recording",
@@ -65,7 +68,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "app.notify.type_failed": "Failed to type text",
         "app.notify.hotkey_error_title": "Hotkey Error",
         "app.notify.error_title": "Typr Error",
-
         # History Dialog
         "history.title": "Typr History",
         "history.search": "Search:",
@@ -86,7 +88,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "history.delete_confirm.msg": "Delete this transcription from history?",
         "history.clear_confirm.title": "Clear history",
         "history.clear_confirm.msg": "Permanently delete all transcription history?",
-
         # Settings Dialog
         "settings.title": "Typr Settings",
         "settings.tabs.general": "General",
@@ -101,7 +102,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "settings.general.fetch_tooltip": "Fetch available models from API endpoint",
         "settings.general.language": "Language:",
         "settings.general.context": "Context:",
-        "settings.general.context_placeholder": "Optional context to improve accuracy (e.g., technical terms, names)",
+        "settings.general.context_placeholder": (
+            "Optional context to improve accuracy (e.g., technical terms, names)"
+        ),
         "settings.general.ui": "User Interface",
         "settings.general.show_notifications": "Show notifications",
         "settings.general.notification_duration": "Notification duration:",
@@ -113,11 +116,16 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "settings.api.base_url": "Base URL:",
         "settings.api.base_url_placeholder": "https://api.openai.com/v1",
         "settings.api.test_connection": "Test Connection",
-        "settings.api.info": "Get your API key from <a href='https://platform.openai.com/api-keys'>OpenAI Platform</a>",
+        "settings.api.info": (
+            "Get your API key from "
+            "<a href='https://platform.openai.com/api-keys'>OpenAI Platform</a>"
+        ),
         "settings.hotkeys.group": "Keyboard Shortcuts",
         "settings.hotkeys.ptt": "Push-to-Talk:",
         "settings.hotkeys.cancel": "Cancel Recording:",
-        "settings.hotkeys.info": "Note: Hotkeys are registered directly with your input devices via evdev.",
+        "settings.hotkeys.info": (
+            "Note: Hotkeys are registered directly with your input devices via evdev."
+        ),
         "settings.audio.group": "Audio Input",
         "settings.audio.device": "Input Device:",
         "settings.audio.device_default": "Default",
@@ -134,14 +142,18 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "settings.history.enabled": "Save transcription history",
         "settings.history.max": "Max entries:",
         "settings.history.entries_suffix": "entries",
-        "settings.history.info": "History is stored locally at <code>~/.local/share/typr/history.json</code>. Open the History window from the tray icon to browse and copy past transcriptions.",
+        "settings.history.info": (
+            "History is stored locally at <code>~/.local/share/typr/history.json</code>. "
+            "Open the History window from the tray icon to browse and copy past transcriptions."
+        ),
         "settings.about.desc": "Speech-to-text for Linux using OpenAI and Parakeet-compatible APIs",
         "settings.about.version": "Version 0.1.0",
-        
         # Test Connection Outputs
         "settings.api.test.checking": "Checking connection...",
         "settings.api.test.valid": "Settings are valid.",
-        "settings.api.test.valid_transcribe": "Settings are valid: transcription endpoint is available.",
+        "settings.api.test.valid_transcribe": (
+            "Settings are valid: transcription endpoint is available."
+        ),
         "settings.api.test.err_401": "Error 401: API key is missing or invalid.",
         "settings.api.test.err_403": "Error 403: access denied (check API key and permissions).",
         "settings.api.test.err_404": "Error 404: endpoint not found (check Base URL).",
@@ -151,7 +163,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "settings.api.test.timeout": "Timeout: server did not respond in time.",
         "settings.api.test.network_err": "Network error: {error}",
         "settings.api.test.conn_err": "Connection error: {error}",
-        
         # Fetch Models Outputs
         "settings.fetch.no_models.title": "No Models",
         "settings.fetch.no_models.msg": "No models found at this endpoint",
@@ -183,10 +194,14 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "tray.status.error": "Ошибка",
         "tray.status.unknown": "Неизвестно",
         "tray.notification.error.title": "Ошибка Typr",
-        
         # Notifications in App
-        "app.notify.text_injection_unavailable": "Вставка текста недоступна. Проверьте доступ к /dev/uinput и наличие утилит буфера.",
-        "app.notify.hotkey_register_failed": "Не удалось зарегистрировать горячую клавишу. Проверьте настройки для ручной конфигурации.",
+        "app.notify.text_injection_unavailable": (
+            "Вставка текста недоступна. Проверьте доступ к /dev/uinput и наличие утилит буфера."
+        ),
+        "app.notify.hotkey_register_failed": (
+            "Не удалось зарегистрировать горячую клавишу. "
+            "Проверьте настройки для ручной конфигурации."
+        ),
         "app.notify.started.title": "Typr запущен",
         "app.notify.started.msg": "Зажмите {hotkey} для записи",
         "app.notify.recording_start_failed": "Не удалось начать запись",
@@ -195,7 +210,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "app.notify.type_failed": "Не удалось вставить текст",
         "app.notify.hotkey_error_title": "Ошибка горячей клавиши",
         "app.notify.error_title": "Ошибка Typr",
-
         # History Dialog
         "history.title": "История Typr",
         "history.search": "Поиск:",
@@ -216,7 +230,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "history.delete_confirm.msg": "Удалить эту запись из истории?",
         "history.clear_confirm.title": "Очистить историю",
         "history.clear_confirm.msg": "Безвозвратно удалить всю историю транскрипций?",
-
         # Settings Dialog
         "settings.title": "Настройки Typr",
         "settings.tabs.general": "Основные",
@@ -231,7 +244,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "settings.general.fetch_tooltip": "Получить доступные модели из эндпоинта API",
         "settings.general.language": "Язык:",
         "settings.general.context": "Контекст:",
-        "settings.general.context_placeholder": "Необязательный контекст для улучшения точности (например, термины, имена)",
+        "settings.general.context_placeholder": (
+            "Необязательный контекст для улучшения точности (например, термины, имена)"
+        ),
         "settings.general.ui": "Интерфейс пользователя",
         "settings.general.show_notifications": "Показывать уведомления",
         "settings.general.notification_duration": "Длительность уведомлений:",
@@ -243,11 +258,16 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "settings.api.base_url": "Базовый URL:",
         "settings.api.base_url_placeholder": "https://api.openai.com/v1",
         "settings.api.test_connection": "Проверить соединение",
-        "settings.api.info": "Получите API-ключ на <a href='https://platform.openai.com/api-keys'>платформе OpenAI</a>",
+        "settings.api.info": (
+            "Получите API-ключ на "
+            "<a href='https://platform.openai.com/api-keys'>платформе OpenAI</a>"
+        ),
         "settings.hotkeys.group": "Сочетания клавиш",
         "settings.hotkeys.ptt": "Запись (удержание):",
         "settings.hotkeys.cancel": "Отмена записи:",
-        "settings.hotkeys.info": "Примечание: Горячие клавиши регистрируются в системе напрямую через evdev.",
+        "settings.hotkeys.info": (
+            "Примечание: Горячие клавиши регистрируются в системе напрямую через evdev."
+        ),
         "settings.audio.group": "Вход звука",
         "settings.audio.device": "Устройство ввода:",
         "settings.audio.device_default": "По умолчанию",
@@ -264,14 +284,20 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "settings.history.enabled": "Сохранять историю транскрипций",
         "settings.history.max": "Макс. записей:",
         "settings.history.entries_suffix": "записей",
-        "settings.history.info": "История хранится локально в файле <code>~/.local/share/typr/history.json</code>. Откройте окно истории из трея, чтобы просмотреть и скопировать прошлые записи.",
-        "settings.about.desc": "Голосовой ввод для Linux с использованием OpenAI и Parakeet-совместимых API",
+        "settings.history.info": (
+            "История хранится локально в файле <code>~/.local/share/typr/history.json</code>. "
+            "Откройте окно истории из трея, чтобы просмотреть и скопировать прошлые записи."
+        ),
+        "settings.about.desc": (
+            "Голосовой ввод для Linux с использованием OpenAI и Parakeet-совместимых API"
+        ),
         "settings.about.version": "Версия 0.1.0",
-        
         # Test Connection Outputs
         "settings.api.test.checking": "Проверка соединения...",
         "settings.api.test.valid": "Настройки корректны.",
-        "settings.api.test.valid_transcribe": "Настройки корректны: эндпоинт транскрипции доступен.",
+        "settings.api.test.valid_transcribe": (
+            "Настройки корректны: эндпоинт транскрипции доступен."
+        ),
         "settings.api.test.err_401": "Ошибка 401: API ключ отсутствует или неверен.",
         "settings.api.test.err_403": "Ошибка 403: доступ запрещен (проверьте ключ и права).",
         "settings.api.test.err_404": "Ошибка 404: эндпоинт не найден (проверьте Базовый URL).",
@@ -281,7 +307,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "settings.api.test.timeout": "Таймаут: сервер не ответил вовремя.",
         "settings.api.test.network_err": "Сетевая ошибка: {error}",
         "settings.api.test.conn_err": "Ошибка подключения: {error}",
-        
         # Fetch Models Outputs
         "settings.fetch.no_models.title": "Нет моделей",
         "settings.fetch.no_models.msg": "Модели не найдены на этом эндпоинте",
@@ -291,7 +316,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "settings.fetch.err_404": "Эндпоинт списка моделей не найден. Проверьте Базовый URL.",
         "settings.fetch.err_api": "Ошибка API: {status}\n{text}",
         "settings.fetch.err_generic": "Не удалось получить список моделей: {error}",
-    }
+    },
 }
 
 

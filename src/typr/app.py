@@ -1,7 +1,7 @@
 """Main application controller for Typr."""
 
 from enum import Enum, auto
-from typing import Optional
+from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import QApplication
@@ -13,8 +13,12 @@ from typr.core.hotkey_manager import HotkeyManager
 from typr.core.text_injector import TextInjector
 from typr.core.transcriber import WhisperTranscriber
 from typr.ui.tray_icon import TrayIcon, TrayState
-from typr.utils.logger import logger
 from typr.utils.i18n import tr
+from typr.utils.logger import logger
+
+if TYPE_CHECKING:
+    from typr.ui.history_dialog import HistoryDialog
+    from typr.ui.settings_dialog import SettingsDialog
 
 
 class AppState(Enum):
@@ -35,7 +39,7 @@ class TyprApp(QObject):
 
     state_changed = pyqtSignal(AppState)
 
-    def __init__(self, parent: Optional[QObject] = None):
+    def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
 
         # Load configuration
@@ -77,8 +81,8 @@ class TyprApp(QObject):
         self.tray_icon.set_mode(self.config.transcription.mode)
 
         # Dialogs (lazy loaded)
-        self._settings_dialog: Optional["SettingsDialog"] = None
-        self._history_dialog: Optional["HistoryDialog"] = None
+        self._settings_dialog: SettingsDialog | None = None
+        self._history_dialog: HistoryDialog | None = None
 
     def _connect_signals(self) -> None:
         """Connect all component signals."""
@@ -117,7 +121,10 @@ class TyprApp(QObject):
         if not self.text_injector.is_available():
             self.tray_icon.show_notification(
                 tr("app.notify.error_title", "Typr Error"),
-                tr("app.notify.text_injection_unavailable", "Text injection unavailable. Check /dev/uinput access and clipboard tools."),
+                tr(
+                    "app.notify.text_injection_unavailable",
+                    "Text injection unavailable. Check /dev/uinput access and clipboard tools.",
+                ),
                 self.tray_icon.MessageIcon.Warning,
             )
 
@@ -125,7 +132,10 @@ class TyprApp(QObject):
         if not self.hotkey_manager.initialize():
             self.tray_icon.show_notification(
                 tr("app.notify.error_title", "Typr Error"),
-                tr("app.notify.hotkey_register_failed", "Could not register hotkey. Check Settings for manual configuration."),
+                tr(
+                    "app.notify.hotkey_register_failed",
+                    "Could not register hotkey. Check Settings for manual configuration.",
+                ),
                 self.tray_icon.MessageIcon.Warning,
             )
 
@@ -133,7 +143,9 @@ class TyprApp(QObject):
         self.tray_icon.show()
         self.tray_icon.show_notification(
             tr("app.notify.started.title", "Typr Started"),
-            tr("app.notify.started.msg", "Hold {hotkey} to record").format(hotkey=self.config.hotkeys.push_to_talk),
+            tr("app.notify.started.msg", "Hold {hotkey} to record").format(
+                hotkey=self.config.hotkeys.push_to_talk
+            ),
             self.tray_icon.MessageIcon.Information,
             2000,
         )
@@ -147,7 +159,9 @@ class TyprApp(QObject):
 
         self._set_state(AppState.RECORDING)
         if not self.audio_recorder.start_recording():
-            self._set_state(AppState.ERROR, tr("app.notify.recording_start_failed", "Failed to start recording"))
+            self._set_state(
+                AppState.ERROR, tr("app.notify.recording_start_failed", "Failed to start recording")
+            )
 
     @pyqtSlot()
     def _on_recording_stop(self) -> None:
@@ -225,7 +239,7 @@ class TyprApp(QObject):
             self.tray_icon.MessageIcon.Warning,
         )
 
-    def _set_state(self, state: AppState, message: Optional[str] = None) -> None:
+    def _set_state(self, state: AppState, message: str | None = None) -> None:
         """Set application state.
 
         Args:

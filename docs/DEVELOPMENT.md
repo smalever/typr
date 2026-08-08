@@ -72,6 +72,7 @@ Installer preflight без изменений системы:
 4. Unicode paste в GUI-приложение и terminal.
 5. Восстановление clipboard и сохранение нового clipboard content пользователя.
 6. Error recovery при недоступном endpoint и повторную запись после recovery.
+7. Отзывчивость Settings при `Fetch` и `Test Connection` на медленном или недоступном endpoint.
 
 ## Документация
 

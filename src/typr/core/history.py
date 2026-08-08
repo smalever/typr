@@ -5,12 +5,10 @@ import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from typr.utils.logger import logger
-
 
 HISTORY_DIR = Path.home() / ".local" / "share" / "typr"
 HISTORY_FILE = HISTORY_DIR / "history.json"
@@ -24,16 +22,16 @@ class HistoryEntry:
     timestamp: str  # ISO 8601
     text: str
     model: str = ""
-    language: Optional[str] = None
-    duration_ms: Optional[int] = None
+    language: str | None = None
+    duration_ms: int | None = None
 
     @classmethod
     def create(
         cls,
         text: str,
         model: str = "",
-        language: Optional[str] = None,
-        duration_ms: Optional[int] = None,
+        language: str | None = None,
+        duration_ms: int | None = None,
     ) -> "HistoryEntry":
         return cls(
             id=uuid.uuid4().hex,
@@ -56,7 +54,7 @@ class HistoryManager(QObject):
 
     history_changed = pyqtSignal()
 
-    def __init__(self, max_entries: int = 500, parent: Optional[QObject] = None):
+    def __init__(self, max_entries: int = 500, parent: QObject | None = None):
         super().__init__(parent)
         self._max_entries = max_entries
         self._entries: list[HistoryEntry] = []
@@ -99,8 +97,7 @@ class HistoryManager(QObject):
             # Drop unknown fields (e.g., audio_path/audio_bytes from earlier versions)
             known = {f for f in HistoryEntry.__dataclass_fields__}
             self._entries = [
-                HistoryEntry(**{k: v for k, v in e.items() if k in known})
-                for e in entries
+                HistoryEntry(**{k: v for k, v in e.items() if k in known}) for e in entries
             ]
             logger.info(f"Loaded {len(self._entries)} history entries")
         except (json.JSONDecodeError, TypeError, ValueError) as e:

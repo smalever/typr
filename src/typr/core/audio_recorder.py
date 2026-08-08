@@ -3,7 +3,6 @@
 import io
 import wave
 from threading import Event, Thread
-from typing import Optional
 
 import pyaudio
 from PyQt6.QtCore import QObject, pyqtSignal
@@ -25,14 +24,14 @@ class AudioRecorder(QObject):
     FORMAT = pyaudio.paInt16
     CHUNK_SIZE = 1024
 
-    def __init__(self, config: Optional[AudioConfig] = None, parent: Optional[QObject] = None):
+    def __init__(self, config: AudioConfig | None = None, parent: QObject | None = None):
         super().__init__(parent)
         self.config = config or AudioConfig()
-        self._audio: Optional[pyaudio.PyAudio] = None
-        self._stream: Optional[pyaudio.Stream] = None
+        self._audio: pyaudio.PyAudio | None = None
+        self._stream: pyaudio.Stream | None = None
         self._frames: list[bytes] = []
         self._recording = Event()
-        self._thread: Optional[Thread] = None
+        self._thread: Thread | None = None
 
     def _ensure_audio(self) -> pyaudio.PyAudio:
         """Ensure PyAudio is initialized."""
@@ -105,7 +104,7 @@ class AudioRecorder(QObject):
         # Convert bytes to 16-bit samples
         import struct
 
-        samples = struct.unpack(f"<{len(data)//2}h", data)
+        samples = struct.unpack(f"<{len(data) // 2}h", data)
         if not samples:
             return 0.0
 
@@ -175,7 +174,7 @@ class AudioRecorder(QObject):
 
         return wav_buffer.getvalue()
 
-    def _get_device_index(self) -> Optional[int]:
+    def _get_device_index(self) -> int | None:
         """Get device index from config or None for default."""
         if not self.config.input_device:
             return None
@@ -201,7 +200,10 @@ class AudioRecorder(QObject):
         for i in range(audio.get_device_count()):
             try:
                 info = audio.get_device_info_by_index(i)
-                if info["maxInputChannels"] > 0:
+                max_input_channels = info["maxInputChannels"]
+                if not isinstance(max_input_channels, int | float):
+                    continue
+                if max_input_channels > 0:
                     devices.append(
                         {
                             "index": i,

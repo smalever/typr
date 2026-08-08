@@ -4,7 +4,6 @@ import os
 import shutil
 import subprocess
 import time
-from typing import Optional
 
 from PyQt6.QtCore import QTimer
 
@@ -19,10 +18,6 @@ except ImportError:
     logger.warning("evdev not available for text injection")
 
 
-# CHAR_TO_KEY dictionary is removed to get rid of keyboard layout binding legacy.
-
-
-
 class TextInjector:
     """Injects text using evdev UInput (works on Wayland and X11)."""
 
@@ -35,10 +30,13 @@ class TextInjector:
         """
         self.typing_delay = typing_delay
         self.restore_delay = restore_delay
-        self._ui: Optional["UInput"] = None
+        self._ui: UInput | None = None
         self._available = False
-        self._clipboard_restore_timer: Optional[QTimer] = None
-        self._clipboard_process: Optional[subprocess.Popen] = None
+        self._clipboard_restore_timer: QTimer | None = None
+        self._clipboard_process: subprocess.Popen | None = None
+        self._backup_text = ""
+        self._has_backup = False
+        self._pasted_text = ""
         self._init_uinput()
 
     def _init_uinput(self) -> None:
@@ -80,7 +78,9 @@ class TextInjector:
         try:
             backend = self._detect_clipboard_backend()
             if backend is None:
-                logger.error("No clipboard backend (wl-clipboard/xclip/xsel) available. Cannot paste text.")
+                logger.error(
+                    "No clipboard backend (wl-clipboard/xclip/xsel) available. Cannot paste text."
+                )
                 return False
             return self._paste_text(text)
 
@@ -88,12 +88,11 @@ class TextInjector:
             logger.error(f"Text injection failed: {e}")
             return False
 
-
     def _backup_clipboard(self) -> None:
         """Back up the current clipboard text."""
         self._backup_text = ""
         self._has_backup = False
-        
+
         backend = self._detect_clipboard_backend()
         if backend is None:
             return
@@ -130,7 +129,7 @@ class TextInjector:
                 if res.returncode == 0:
                     self._backup_text = res.stdout.decode("utf-8", errors="replace")
                     self._has_backup = True
-            
+
             if self._has_backup:
                 logger.debug(f"Clipboard backed up successfully ({len(self._backup_text)} chars)")
         except subprocess.TimeoutExpired:
@@ -148,37 +147,66 @@ class TextInjector:
         current_text = ""
         try:
             if backend == "wl-copy":
-                res = subprocess.run(["wl-paste", "-n"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=0.5)
+                res = subprocess.run(
+                    ["wl-paste", "-n"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    timeout=0.5,
+                )
                 if res.returncode == 0:
                     current_text = res.stdout.decode("utf-8", errors="replace")
             elif backend == "xclip":
-                res = subprocess.run(["xclip", "-selection", "clipboard", "-o"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=0.5)
+                res = subprocess.run(
+                    ["xclip", "-selection", "clipboard", "-o"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    timeout=0.5,
+                )
                 if res.returncode == 0:
                     current_text = res.stdout.decode("utf-8", errors="replace")
             elif backend == "xsel":
-                res = subprocess.run(["xsel", "--clipboard", "--output"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=0.5)
+                res = subprocess.run(
+                    ["xsel", "--clipboard", "--output"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    timeout=0.5,
+                )
                 if res.returncode == 0:
                     current_text = res.stdout.decode("utf-8", errors="replace")
         except Exception as e:
             logger.debug(f"Failed to read clipboard for verification: {e}")
             return
 
-        # If the clipboard text is different from what we pasted, the user copied something new. Do not overwrite it!
-        pasted_text = getattr(self, "_pasted_text", "")
-        if current_text != pasted_text:
+        # Preserve clipboard content copied by the user after the paste.
+        if current_text != self._pasted_text:
             logger.debug("Clipboard content changed by user, skipping restore")
+            self._terminate_clipboard_process()
             return
 
+        self._terminate_clipboard_process()
+
         # Perform restore
-        if not getattr(self, "_has_backup", False):
+        if not self._has_backup:
             # Clear clipboard
             try:
                 if backend == "wl-copy":
-                    subprocess.run(["wl-copy", "--clear"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    subprocess.run(
+                        ["wl-copy", "--clear"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
                 elif backend == "xclip":
-                    subprocess.run(["xclip", "-selection", "clipboard", "/dev/null"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    subprocess.run(
+                        ["xclip", "-selection", "clipboard", "/dev/null"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
                 elif backend == "xsel":
-                    subprocess.run(["xsel", "--clipboard", "--clear"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    subprocess.run(
+                        ["xsel", "--clipboard", "--clear"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
                 logger.debug("Clipboard cleared (no backup existed)")
             except Exception as e:
                 logger.debug(f"Failed to clear clipboard: {e}")
@@ -186,9 +214,10 @@ class TextInjector:
 
         try:
             # Restore original clipboard
-            backup_text = getattr(self, "_backup_text", "")
-            self._spawn_clipboard_backend(backend, backup_text)
-            logger.debug(f"Clipboard restored ({len(backup_text)} chars)")
+            process = self._spawn_clipboard_backend(backend, self._backup_text)
+            if process is not None:
+                self._clipboard_process = process
+                logger.debug(f"Clipboard restored ({len(self._backup_text)} chars)")
         except Exception as e:
             logger.error(f"Failed to restore clipboard: {e}")
 
@@ -198,6 +227,11 @@ class TextInjector:
         if backend is None:
             logger.error("No clipboard backend available for Unicode paste")
             return False
+
+        if self._clipboard_restore_timer is not None:
+            self._clipboard_restore_timer.stop()
+        if self._clipboard_process is not None:
+            self._restore_clipboard()
 
         # Backup clipboard first
         self._backup_clipboard()
@@ -213,7 +247,7 @@ class TextInjector:
         time.sleep(0.12)
         self._type_modified_key(ecodes.KEY_INSERT, shift=True)
 
-        self._schedule_clipboard_release(self.restore_delay)  # Wait restore_delay before releasing/restoring
+        self._schedule_clipboard_release(self.restore_delay)
         logger.info(f"Pasted {len(text)} characters through {backend}")
         return True
 
@@ -227,12 +261,10 @@ class TextInjector:
         self._clipboard_restore_timer.start(delay_ms)
 
     def _on_release_clipboard_timeout(self) -> None:
-        """Release the clipboard helper process after paste completes and restore original clipboard."""
-        self._terminate_clipboard_process()
+        """Restore clipboard after the paste target has consumed its contents."""
         self._restore_clipboard()
 
-
-    def _detect_clipboard_backend(self) -> Optional[str]:
+    def _detect_clipboard_backend(self) -> str | None:
         """Pick the best available clipboard backend for the current session."""
         if os.environ.get("WAYLAND_DISPLAY") and shutil.which("wl-copy"):
             return "wl-copy"
@@ -243,7 +275,7 @@ class TextInjector:
                 return "xsel"
         return None
 
-    def _spawn_clipboard_backend(self, backend: str, text: str) -> Optional[subprocess.Popen]:
+    def _spawn_clipboard_backend(self, backend: str, text: str) -> subprocess.Popen | None:
         """Start a clipboard backend process and feed it text."""
         commands = {
             "wl-copy": ["wl-copy", "--type", "text/plain;charset=utf-8", "--foreground"],
@@ -286,6 +318,7 @@ class TextInjector:
                 pass
         finally:
             self._clipboard_process = None
+
     def _type_modified_key(self, key_code: int, shift: bool = False, ctrl: bool = False) -> None:
         """Type a key with Ctrl and/or Shift modifiers."""
         if not self._ui:
@@ -329,6 +362,10 @@ class TextInjector:
 
     def cleanup(self) -> None:
         """Clean up UInput device."""
+        if self._clipboard_restore_timer is not None:
+            self._clipboard_restore_timer.stop()
+            self._clipboard_restore_timer.deleteLater()
+            self._clipboard_restore_timer = None
         self._terminate_clipboard_process()
         if self._ui:
             try:

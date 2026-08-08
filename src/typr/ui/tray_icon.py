@@ -1,14 +1,13 @@
 """System tray icon for Typr."""
 
 from enum import Enum, auto
-from typing import Optional
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtGui import QAction, QIcon
 from PyQt6.QtWidgets import QMenu, QSystemTrayIcon, QWidget
 
-from typr.utils.logger import logger
 from typr.utils.i18n import tr
+from typr.utils.logger import logger
 
 
 class TrayState(Enum):
@@ -45,7 +44,7 @@ class TrayIcon(QSystemTrayIcon):
         TrayState.ERROR: "Error - Right-click for options",
     }
 
-    def __init__(self, hotkey: str = "Meta+Shift+Space", parent: Optional[QWidget] = None):
+    def __init__(self, hotkey: str = "Meta+Shift+Space", parent: QWidget | None = None):
         super().__init__(parent)
         self._state = TrayState.IDLE
         self._hotkey = hotkey
@@ -153,7 +152,7 @@ class TrayIcon(QSystemTrayIcon):
         elif self._state == TrayState.RECORDING:
             self.record_toggled.emit(False)  # Stop
 
-    def set_state(self, state: TrayState, message: Optional[str] = None) -> None:
+    def set_state(self, state: TrayState, message: str | None = None) -> None:
         """Update icon and tooltip based on state.
 
         Args:
@@ -184,9 +183,9 @@ class TrayIcon(QSystemTrayIcon):
             TrayState.PROCESSING: tr("tray.status_transcribing", "Status: Transcribing"),
             TrayState.ERROR: tr("tray.status_error", "Status: Error"),
         }.get(state, f"Status: {self._status_message}")
-        
-        if message:
-            status_label = f"{tr('tray.status.error', 'Error')}: {message}" if state == TrayState.ERROR else status_label
+
+        if message and state == TrayState.ERROR:
+            status_label = f"{tr('tray.status.error', 'Error')}: {message}"
 
         self._status_action.setText(status_label)
 
@@ -212,7 +211,7 @@ class TrayIcon(QSystemTrayIcon):
             TrayState.PROCESSING: "tray.transcribing",
             TrayState.ERROR: "tray.error",
         }.get(self._state, "tray.status.unknown")
-        
+
         default_val = {
             TrayState.IDLE: "Ready - Hold {hotkey} to record",
             TrayState.RECORDING: "Recording... Release to stop",
@@ -265,7 +264,9 @@ class TrayIcon(QSystemTrayIcon):
         """
         self.set_state(TrayState.ERROR, message)
         self.show_notification(
-            tr("tray.notification.error.title", "Typr Error"), message, QSystemTrayIcon.MessageIcon.Critical
+            tr("tray.notification.error.title", "Typr Error"),
+            message,
+            QSystemTrayIcon.MessageIcon.Critical,
         )
 
     def get_state(self) -> TrayState:

@@ -1,8 +1,10 @@
 """Settings dialog for Typr."""
 
-from typing import Optional
+from collections.abc import Callable
+from typing import Any
 
-from PyQt6.QtCore import Qt, pyqtSignal
+import httpx
+from PyQt6.QtCore import QObject, QRunnable, Qt, QThreadPool, pyqtSignal
 from PyQt6.QtGui import QKeySequence
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -25,8 +27,101 @@ from PyQt6.QtWidgets import (
 )
 
 from typr.config import AppConfig
-from typr.utils.logger import logger
 from typr.utils.i18n import tr
+from typr.utils.logger import logger
+
+
+class _ApiRequestSignals(QObject):
+    """Deliver background HTTP results back to the Qt thread."""
+
+    succeeded = pyqtSignal(object)
+    failed = pyqtSignal(object)
+
+
+class _ApiRequest(QRunnable):
+    """Run one settings HTTP operation outside the main Qt thread."""
+
+    def __init__(self, request: Callable[[], Any]):
+        super().__init__()
+        self._request = request
+        self.signals = _ApiRequestSignals()
+
+    def run(self) -> None:
+        try:
+            self.signals.succeeded.emit(self._request())
+        except Exception as error:
+            self.signals.failed.emit(error)
+
+
+def _authorization_headers(api_key: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+
+def _request_models(base_url: str, api_key: str) -> list[str]:
+    """Fetch model identifiers from an OpenAI-compatible endpoint."""
+    headers = _authorization_headers(api_key)
+    with httpx.Client(timeout=10.0) as client:
+        response = client.get(f"{base_url}/models", headers=headers)
+        if response.status_code == 404:
+            response = client.get(f"{base_url}/audio/models", headers=headers)
+        if response.status_code == 404:
+            schema_response = client.get(
+                f"{base_url.rsplit('/v1', 1)[0]}/openapi.json",
+                headers=headers,
+            )
+            schema_response.raise_for_status()
+            schema = schema_response.json()
+            model_enum = (
+                schema.get("paths", {})
+                .get("/v1/audio/transcriptions", {})
+                .get("post", {})
+                .get("requestBody", {})
+                .get("content", {})
+                .get("multipart/form-data", {})
+                .get("schema", {})
+                .get("properties", {})
+                .get("model", {})
+                .get("enum", [])
+            )
+            data: object = [{"id": model_id} for model_id in model_enum if model_id]
+        else:
+            response.raise_for_status()
+            data = response.json()
+
+    models: list[str] = []
+    if isinstance(data, dict):
+        raw_models = data.get("data", [])
+    elif isinstance(data, list):
+        raw_models = data
+    else:
+        raw_models = []
+
+    if isinstance(raw_models, list):
+        for model in raw_models:
+            if isinstance(model, str):
+                models.append(model)
+            elif isinstance(model, dict):
+                model_id = model.get("id") or model.get("name")
+                if isinstance(model_id, str) and model_id:
+                    models.append(model_id)
+    return sorted(set(models))
+
+
+def _probe_api(base_url: str, api_key: str) -> bool:
+    """Return whether the transcription endpoint was used as the fallback probe."""
+    headers = _authorization_headers(api_key)
+    with httpx.Client(timeout=10.0) as client:
+        response = client.get(f"{base_url}/models", headers=headers)
+        if response.status_code != 404:
+            response.raise_for_status()
+            return False
+
+        probe = client.options(f"{base_url}/audio/transcriptions", headers=headers)
+        if probe.status_code == 404 or probe.status_code in (401, 403):
+            probe.raise_for_status()
+        if probe.status_code >= 500:
+            probe.raise_for_status()
+        return True
 
 
 class SettingsDialog(QDialog):
@@ -58,9 +153,14 @@ class SettingsDialog(QDialog):
         ("hi", "Hindi"),
     ]
 
-    def __init__(self, config: AppConfig, parent: Optional[QWidget] = None):
+    def __init__(self, config: AppConfig, parent: QWidget | None = None):
         super().__init__(parent)
         self.config = config
+        thread_pool = QThreadPool.globalInstance()
+        if thread_pool is None:
+            raise RuntimeError("Qt global thread pool is unavailable")
+        self._thread_pool = thread_pool
+        self._active_requests: set[_ApiRequest] = set()
         self._setup_ui()
         self._load_settings()
 
@@ -112,7 +212,9 @@ class SettingsDialog(QDialog):
         model_layout.addWidget(self._model_combo, 1)
 
         self._fetch_models_btn = QPushButton(tr("settings.general.fetch", "Fetch"))
-        self._fetch_models_btn.setToolTip(tr("settings.general.fetch_tooltip", "Fetch available models from API endpoint"))
+        self._fetch_models_btn.setToolTip(
+            tr("settings.general.fetch_tooltip", "Fetch available models from API endpoint")
+        )
         self._fetch_models_btn.clicked.connect(self._fetch_models)
         model_layout.addWidget(self._fetch_models_btn)
         trans_layout.addRow(tr("settings.general.model", "Model:"), model_layout)
@@ -127,7 +229,10 @@ class SettingsDialog(QDialog):
         self._prompt_edit = QTextEdit()
         self._prompt_edit.setMaximumHeight(80)
         self._prompt_edit.setPlaceholderText(
-            tr("settings.general.context_placeholder", "Optional context to improve accuracy (e.g., technical terms, names)")
+            tr(
+                "settings.general.context_placeholder",
+                "Optional context to improve accuracy (e.g., technical terms, names)",
+            )
         )
         trans_layout.addRow(tr("settings.general.context", "Context:"), self._prompt_edit)
 
@@ -138,7 +243,9 @@ class SettingsDialog(QDialog):
         ui_layout = QFormLayout(ui_group)
 
         # Notifications
-        self._notifications_check = QCheckBox(tr("settings.general.show_notifications", "Show notifications"))
+        self._notifications_check = QCheckBox(
+            tr("settings.general.show_notifications", "Show notifications")
+        )
         ui_layout.addRow(self._notifications_check)
 
         # Notification duration
@@ -146,9 +253,10 @@ class SettingsDialog(QDialog):
         self._notif_duration_spin.setRange(1000, 10000)
         self._notif_duration_spin.setSingleStep(500)
         self._notif_duration_spin.setSuffix(" ms")
-        ui_layout.addRow(tr("settings.general.notification_duration", "Notification duration:"), self._notif_duration_spin)
-
-
+        ui_layout.addRow(
+            tr("settings.general.notification_duration", "Notification duration:"),
+            self._notif_duration_spin,
+        )
 
         layout.addWidget(ui_group)
         layout.addStretch()
@@ -181,13 +289,17 @@ class SettingsDialog(QDialog):
 
         # API base URL
         self._api_base_edit = QLineEdit()
-        self._api_base_edit.setPlaceholderText(tr("settings.api.base_url_placeholder", "https://api.openai.com/v1"))
+        self._api_base_edit.setPlaceholderText(
+            tr("settings.api.base_url_placeholder", "https://api.openai.com/v1")
+        )
         api_layout.addRow(tr("settings.api.base_url", "Base URL:"), self._api_base_edit)
 
         # Test connection button
-        test_btn = QPushButton(tr("settings.api.test_connection", "Test Connection"))
-        test_btn.clicked.connect(self._test_connection)
-        api_layout.addRow("", test_btn)
+        self._test_connection_btn = QPushButton(
+            tr("settings.api.test_connection", "Test Connection")
+        )
+        self._test_connection_btn.clicked.connect(self._test_connection)
+        api_layout.addRow("", self._test_connection_btn)
 
         self._api_test_status = QLabel("")
         self._api_test_status.setWordWrap(True)
@@ -197,7 +309,11 @@ class SettingsDialog(QDialog):
 
         # Info
         info_label = QLabel(
-            tr("settings.api.info", "Get your API key from <a href='https://platform.openai.com/api-keys'>OpenAI Platform</a>")
+            tr(
+                "settings.api.info",
+                "Get your API key from "
+                "<a href='https://platform.openai.com/api-keys'>OpenAI Platform</a>",
+            )
         )
         info_label.setOpenExternalLinks(True)
         layout.addWidget(info_label)
@@ -221,13 +337,18 @@ class SettingsDialog(QDialog):
 
         # Cancel hotkey
         self._cancel_hotkey_edit = QKeySequenceEdit()
-        hotkey_layout.addRow(tr("settings.hotkeys.cancel", "Cancel Recording:"), self._cancel_hotkey_edit)
+        hotkey_layout.addRow(
+            tr("settings.hotkeys.cancel", "Cancel Recording:"), self._cancel_hotkey_edit
+        )
 
         layout.addWidget(hotkey_group)
 
         # Info
         info_label = QLabel(
-            tr("settings.hotkeys.info", "Note: Hotkeys are registered directly with your input devices via evdev.")
+            tr(
+                "settings.hotkeys.info",
+                "Note: Hotkeys are registered directly with your input devices via evdev.",
+            )
         )
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
@@ -288,7 +409,9 @@ class SettingsDialog(QDialog):
         history_group = QGroupBox(tr("settings.history.group", "Transcription History"))
         history_layout = QFormLayout(history_group)
 
-        self._history_enabled_check = QCheckBox(tr("settings.history.enabled", "Save transcription history"))
+        self._history_enabled_check = QCheckBox(
+            tr("settings.history.enabled", "Save transcription history")
+        )
         history_layout.addRow(self._history_enabled_check)
 
         self._history_max_spin = QSpinBox()
@@ -300,7 +423,12 @@ class SettingsDialog(QDialog):
         layout.addWidget(history_group)
 
         info_label = QLabel(
-            tr("settings.history.info", "History is stored locally at <code>~/.local/share/typr/history.json</code>. Open the History window from the tray icon to browse and copy past transcriptions.")
+            tr(
+                "settings.history.info",
+                "History is stored locally at "
+                "<code>~/.local/share/typr/history.json</code>. Open the History window "
+                "from the tray icon to browse and copy past transcriptions.",
+            )
         )
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
@@ -322,7 +450,12 @@ class SettingsDialog(QDialog):
         version.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(version)
 
-        desc = QLabel(tr("settings.about.desc", "Speech-to-text for Linux using OpenAI and Parakeet-compatible APIs"))
+        desc = QLabel(
+            tr(
+                "settings.about.desc",
+                "Speech-to-text for Linux using OpenAI and Parakeet-compatible APIs",
+            )
+        )
         desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(desc)
 
@@ -388,7 +521,9 @@ class SettingsDialog(QDialog):
 
         # Transcription - handle both preset (data) and custom (text) models
         model_data = self._model_combo.currentData()
-        self.config.transcription.model = model_data if model_data else self._model_combo.currentText()
+        self.config.transcription.model = (
+            model_data if model_data else self._model_combo.currentText()
+        )
         self.config.transcription.language = self._language_combo.currentData()
         self.config.transcription.prompt = self._prompt_edit.toPlainText()
 
@@ -438,110 +573,70 @@ class SettingsDialog(QDialog):
 
     def _fetch_models(self) -> None:
         """Fetch available models from the API endpoint."""
-        base_url = (self._api_base_edit.text() or self.config.api_base_url or "https://api.openai.com/v1").rstrip("/")
+        base_url = (
+            self._api_base_edit.text() or self.config.api_base_url or "https://api.openai.com/v1"
+        ).rstrip("/")
         api_key = self._api_key_edit.text()
 
         self._fetch_models_btn.setEnabled(False)
         self._fetch_models_btn.setText("...")
+        self._start_api_request(
+            lambda: _request_models(base_url, api_key),
+            self._on_models_fetched,
+            self._on_models_fetch_failed,
+        )
 
-        try:
-            import httpx
+    def _on_models_fetched(self, result: object) -> None:
+        models = result if isinstance(result, list) else []
+        if not models:
+            QMessageBox.warning(
+                self,
+                tr("settings.fetch.no_models.title", "No Models"),
+                tr("settings.fetch.no_models.msg", "No models found at this endpoint"),
+            )
+            return
 
-            headers = {}
-            if api_key:
-                headers["Authorization"] = f"Bearer {api_key}"
-
-            with httpx.Client(timeout=10.0) as client:
-                response = client.get(f"{base_url}/models", headers=headers)
-
-                # Some compatible servers expose model listing at a different path.
-                if response.status_code == 404:
-                    response = client.get(f"{base_url}/audio/models", headers=headers)
-                if response.status_code == 404:
-                    # Fallback: extract model enum from OpenAPI schema.
-                    schema_resp = client.get(
-                        f"{base_url.rsplit('/v1', 1)[0]}/openapi.json", headers=headers
-                    )
-                    schema_resp.raise_for_status()
-                    schema = schema_resp.json()
-                    model_enum = (
-                        schema.get("paths", {})
-                        .get("/v1/audio/transcriptions", {})
-                        .get("post", {})
-                        .get("requestBody", {})
-                        .get("content", {})
-                        .get("multipart/form-data", {})
-                        .get("schema", {})
-                        .get("properties", {})
-                        .get("model", {})
-                        .get("enum", [])
-                    )
-                    data = [{"id": model_id} for model_id in model_enum if model_id]
-                else:
-                    response.raise_for_status()
-                    data = response.json()
-
-            # Extract model IDs
-            models = []
-            if isinstance(data, dict) and "data" in data:
-                for model in data["data"]:
-                    model_id = model.get("id", "")
-                    if model_id:
-                        models.append(model_id)
-            elif isinstance(data, list):
-                for model in data:
-                    if isinstance(model, str):
-                        models.append(model)
-                    elif isinstance(model, dict):
-                        models.append(model.get("id", model.get("name", "")))
-
-            if not models:
-                QMessageBox.warning(
-                    self,
-                    tr("settings.fetch.no_models.title", "No Models"),
-                    tr("settings.fetch.no_models.msg", "No models found at this endpoint")
-                )
-                return
-
-            # Update combo box
-            current_model = self._model_combo.currentText()
-            self._model_combo.clear()
-            for model_id in sorted(models):
+        current_model = self._model_combo.currentText()
+        self._model_combo.clear()
+        for model_id in models:
+            if isinstance(model_id, str):
                 self._model_combo.addItem(model_id, model_id)
 
-            # Restore selection if possible
-            index = self._model_combo.findText(current_model)
-            if index >= 0:
-                self._model_combo.setCurrentIndex(index)
+        index = self._model_combo.findText(current_model)
+        if index >= 0:
+            self._model_combo.setCurrentIndex(index)
 
-            QMessageBox.information(
-                self,
-                tr("settings.fetch.success.title", "Models Loaded"),
-                tr("settings.fetch.success.msg", "Found {count} model(s)").format(count=len(models))
-            )
+        QMessageBox.information(
+            self,
+            tr("settings.fetch.success.title", "Models Loaded"),
+            tr("settings.fetch.success.msg", "Found {count} model(s)").format(count=len(models)),
+        )
 
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
-                QMessageBox.warning(
-                    self,
-                    tr("settings.fetch.err.title", "Error"),
-                    tr("settings.fetch.err_404", "Model list endpoint not found. Check Base URL in API settings."),
+    def _on_models_fetch_failed(self, error: Exception) -> None:
+        if isinstance(error, httpx.HTTPStatusError):
+            if error.response.status_code == 404:
+                message = tr(
+                    "settings.fetch.err_404",
+                    "Model list endpoint not found. Check Base URL in API settings.",
                 )
-                return
-            QMessageBox.warning(
-                self,
-                tr("settings.fetch.err.title", "Error"),
-                tr("settings.fetch.err_api", "API error: {status}\n{text}").format(status=e.response.status_code, text=e.response.text[:200]),
-            )
-        except Exception as e:
-            QMessageBox.warning(
-                self,
-                tr("settings.fetch.err.title", "Error"),
-                tr("settings.fetch.err_generic", "Failed to fetch models: {error}").format(error=e)
-            )
-        finally:
-            self._fetch_models_btn.setEnabled(True)
-            self._fetch_models_btn.setText(tr("settings.general.fetch", "Fetch"))
+            else:
+                message = tr(
+                    "settings.fetch.err_api",
+                    "API error: {status}\n{text}",
+                ).format(
+                    status=error.response.status_code,
+                    text=error.response.text[:200],
+                )
+        else:
+            message = tr(
+                "settings.fetch.err_generic",
+                "Failed to fetch models: {error}",
+            ).format(error=error)
+        QMessageBox.warning(self, tr("settings.fetch.err.title", "Error"), message)
+
+    def _finish_models_request(self) -> None:
+        self._fetch_models_btn.setEnabled(True)
+        self._fetch_models_btn.setText(tr("settings.general.fetch", "Fetch"))
 
     def _test_connection(self) -> None:
         """Test API connection."""
@@ -549,64 +644,88 @@ class SettingsDialog(QDialog):
         base_url = (self._api_base_edit.text() or "https://api.openai.com/v1").rstrip("/")
         self._api_test_status.setStyleSheet("")
         self._api_test_status.setText(tr("settings.api.test.checking", "Checking connection..."))
+        self._test_connection_btn.setEnabled(False)
+        self._start_api_request(
+            lambda: _probe_api(base_url, api_key),
+            self._on_api_test_succeeded,
+            self._on_api_test_failed,
+        )
 
-        try:
-            import httpx
+    def _on_api_test_succeeded(self, result: object) -> None:
+        if result is True:
+            message = tr(
+                "settings.api.test.valid_transcribe",
+                "Settings are valid: transcription endpoint is available.",
+            )
+        else:
+            message = tr("settings.api.test.valid", "Settings are valid.")
+        self._set_api_test_status(True, message)
 
-            headers = {}
-            if api_key:
-                headers["Authorization"] = f"Bearer {api_key}"
-
-            with httpx.Client(timeout=10.0) as client:
-                response = client.get(f"{base_url}/models", headers=headers)
-
-                # Some compatible servers don't expose /models. In that case,
-                # probe transcription endpoint instead.
-                if response.status_code == 404:
-                    probe = client.options(
-                        f"{base_url}/audio/transcriptions",
-                        headers=headers,
-                    )
-                    if probe.status_code == 404:
-                        probe.raise_for_status()
-                    if probe.status_code in (401, 403):
-                        probe.raise_for_status()
-                    if probe.status_code >= 500:
-                        probe.raise_for_status()
-                    self._set_api_test_status(
-                        True,
-                        tr("settings.api.test.valid_transcribe", "Settings are valid: transcription endpoint is available."),
-                    )
-                    return
-
-                response.raise_for_status()
-
-            self._set_api_test_status(True, tr("settings.api.test.valid", "Settings are valid."))
-
-        except httpx.HTTPStatusError as e:
-            status = e.response.status_code
-            details = e.response.text[:200].strip()
+    def _on_api_test_failed(self, error: Exception) -> None:
+        if isinstance(error, httpx.HTTPStatusError):
+            status = error.response.status_code
+            details = error.response.text[:200].strip()
             if status == 401:
                 msg = tr("settings.api.test.err_401", "Error 401: API key is missing or invalid.")
             elif status == 403:
-                msg = tr("settings.api.test.err_403", "Error 403: access denied (check API key and permissions).")
+                msg = tr(
+                    "settings.api.test.err_403",
+                    "Error 403: access denied (check API key and permissions).",
+                )
             elif status == 404:
-                msg = tr("settings.api.test.err_404", "Error 404: endpoint not found (check Base URL).")
+                msg = tr(
+                    "settings.api.test.err_404",
+                    "Error 404: endpoint not found (check Base URL).",
+                )
             elif status == 429:
                 msg = tr("settings.api.test.err_429", "Error 429: rate limit exceeded.")
             elif 500 <= status <= 599:
                 msg = tr("settings.api.test.err_5xx", "Server error (5xx): issue on API side.")
             else:
-                msg = tr("settings.api.test.err_generic", "API error {status}.").format(status=status)
+                msg = tr("settings.api.test.err_generic", "API error {status}.").format(
+                    status=status
+                )
             if details:
                 msg = f"{msg}\n{details}"
-            self._set_api_test_status(False, msg)
-        except httpx.TimeoutException:
-            self._set_api_test_status(False, tr("settings.api.test.timeout", "Timeout: server did not respond in time."))
-        except httpx.NetworkError as e:
-            self._set_api_test_status(False, tr("settings.api.test.network_err", "Network error: {error}").format(error=e))
-        except Exception as e:
-            self._set_api_test_status(False, tr("settings.api.test.conn_err", "Connection error: {error}").format(error=e))
+        elif isinstance(error, httpx.TimeoutException):
+            msg = tr(
+                "settings.api.test.timeout",
+                "Timeout: server did not respond in time.",
+            )
+        elif isinstance(error, httpx.NetworkError):
+            msg = tr(
+                "settings.api.test.network_err",
+                "Network error: {error}",
+            ).format(error=error)
+        else:
+            msg = tr(
+                "settings.api.test.conn_err",
+                "Connection error: {error}",
+            ).format(error=error)
+        self._set_api_test_status(False, msg)
+
+    def _finish_api_test(self) -> None:
+        self._test_connection_btn.setEnabled(True)
+
+    def _start_api_request(
+        self,
+        request: Callable[[], Any],
+        on_success: Callable[[object], None],
+        on_error: Callable[[Exception], None],
+    ) -> None:
+        worker = _ApiRequest(request)
+        self._active_requests.add(worker)
+        worker.signals.succeeded.connect(on_success)
+        worker.signals.failed.connect(on_error)
+        if on_success == self._on_models_fetched:
+            worker.signals.succeeded.connect(lambda _: self._finish_models_request())
+            worker.signals.failed.connect(lambda _: self._finish_models_request())
+        else:
+            worker.signals.succeeded.connect(lambda _: self._finish_api_test())
+            worker.signals.failed.connect(lambda _: self._finish_api_test())
+        worker.signals.succeeded.connect(lambda _: self._active_requests.discard(worker))
+        worker.signals.failed.connect(lambda _: self._active_requests.discard(worker))
+        self._thread_pool.start(worker)
 
     def _set_api_test_status(self, success: bool, message: str) -> None:
         """Show API test status under the test button."""
@@ -641,7 +760,9 @@ class SettingsDialog(QDialog):
 
     def _test_microphone(self) -> None:
         """Test microphone recording."""
-        self._test_status.setText(tr("settings.audio.test_status_recording", "Recording for 2 seconds..."))
+        self._test_status.setText(
+            tr("settings.audio.test_status_recording", "Recording for 2 seconds...")
+        )
 
         try:
             from PyQt6.QtCore import QTimer
@@ -657,12 +778,18 @@ class SettingsDialog(QDialog):
 
                 if audio_data and len(audio_data) > 1000:
                     self._test_status.setText(
-                        tr("settings.audio.test_status_success", "Success! Recorded {bytes} bytes").format(bytes=len(audio_data))
+                        tr(
+                            "settings.audio.test_status_success", "Success! Recorded {bytes} bytes"
+                        ).format(bytes=len(audio_data))
                     )
                 else:
-                    self._test_status.setText(tr("settings.audio.test_status_fail", "Recording too short or empty"))
+                    self._test_status.setText(
+                        tr("settings.audio.test_status_fail", "Recording too short or empty")
+                    )
 
             QTimer.singleShot(2000, stop_recording)
 
         except Exception as e:
-            self._test_status.setText(tr("settings.audio.test_status_error", "Error: {error}").format(error=e))
+            self._test_status.setText(
+                tr("settings.audio.test_status_error", "Error: {error}").format(error=e)
+            )

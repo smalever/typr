@@ -1,7 +1,5 @@
 """OpenAI Whisper API transcription."""
 
-from typing import Optional
-
 import httpx
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
@@ -20,7 +18,7 @@ class TranscriberWorker(QThread):
         api_base_url: str,
         audio_data: bytes,
         model: str,
-        language: Optional[str],
+        language: str | None,
         prompt: str,
     ):
         super().__init__()
@@ -94,15 +92,15 @@ class WhisperTranscriber(QObject):
         api_key: str,
         api_base_url: str = "https://api.openai.com/v1",
         model: str = "whisper-1",
-        parent: Optional[QObject] = None,
+        parent: QObject | None = None,
     ):
         super().__init__(parent)
         self.api_key = api_key
         self.api_base_url = api_base_url
         self.model = model
-        self.language: Optional[str] = None
+        self.language: str | None = None
         self.prompt: str = ""
-        self._worker: Optional[TranscriberWorker] = None
+        self._worker: TranscriberWorker | None = None
 
     def transcribe(self, audio_data: bytes) -> None:
         """Start transcription in background thread.
@@ -147,11 +145,11 @@ class WhisperTranscriber(QObject):
 
     def update_settings(
         self,
-        api_key: Optional[str] = None,
-        api_base_url: Optional[str] = None,
-        model: Optional[str] = None,
-        language: Optional[str] = None,
-        prompt: Optional[str] = None,
+        api_key: str | None = None,
+        api_base_url: str | None = None,
+        model: str | None = None,
+        language: str | None = None,
+        prompt: str | None = None,
     ) -> None:
         """Update transcriber settings."""
         if api_key is not None:

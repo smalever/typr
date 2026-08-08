@@ -1,7 +1,6 @@
 """History viewer dialog."""
 
 from datetime import datetime
-from typing import Optional
 
 from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QGuiApplication, QPalette
@@ -31,7 +30,7 @@ class HistoryRowWidget(QWidget):
     copy_requested = pyqtSignal(str)  # entry id
     delete_requested = pyqtSignal(str)
 
-    def __init__(self, entry: HistoryEntry, parent: Optional[QWidget] = None):
+    def __init__(self, entry: HistoryEntry, parent: QWidget | None = None):
         super().__init__(parent)
         self._entry_id = entry.id
 
@@ -58,13 +57,17 @@ class HistoryRowWidget(QWidget):
 
         self._copy_btn = QPushButton(tr("history.row.copy", "Copy"))
         self._copy_btn.setFixedWidth(72)
-        self._copy_btn.setToolTip(tr("history.row.copy_tooltip", "Copy this transcription to the clipboard"))
+        self._copy_btn.setToolTip(
+            tr("history.row.copy_tooltip", "Copy this transcription to the clipboard")
+        )
         self._copy_btn.clicked.connect(self._on_copy_clicked)
         layout.addWidget(self._copy_btn)
 
         self._delete_btn = QPushButton(tr("history.row.delete", "Delete"))
         self._delete_btn.setFixedWidth(72)
-        self._delete_btn.setToolTip(tr("history.row.delete_tooltip", "Delete this transcription from history"))
+        self._delete_btn.setToolTip(
+            tr("history.row.delete_tooltip", "Delete this transcription from history")
+        )
         self._delete_btn.clicked.connect(lambda: self.delete_requested.emit(self._entry_id))
         layout.addWidget(self._delete_btn)
 
@@ -121,7 +124,7 @@ class HistoryRowWidget(QWidget):
 class HistoryDialog(QDialog):
     """Browse, search, copy, and delete past transcriptions."""
 
-    def __init__(self, history: HistoryManager, parent: Optional[QWidget] = None):
+    def __init__(self, history: HistoryManager, parent: QWidget | None = None):
         super().__init__(parent)
         self._history = history
         self._all_entries: list[HistoryEntry] = []
@@ -165,7 +168,9 @@ class HistoryDialog(QDialog):
 
         self._preview = QTextEdit()
         self._preview.setReadOnly(True)
-        self._preview.setPlaceholderText(tr("history.preview_placeholder", "Select an entry to view the full transcription"))
+        self._preview.setPlaceholderText(
+            tr("history.preview_placeholder", "Select an entry to view the full transcription")
+        )
         right_layout.addWidget(self._preview)
 
         preview_btn_row = QHBoxLayout()
@@ -224,7 +229,8 @@ class HistoryDialog(QDialog):
         # Restore selection if possible, else select first
         if previously_selected:
             for i in range(self._list.count()):
-                if self._list.item(i).data(Qt.ItemDataRole.UserRole) == previously_selected:
+                item_at_i = self._list.item(i)
+                if item_at_i and item_at_i.data(Qt.ItemDataRole.UserRole) == previously_selected:
                     self._list.setCurrentRow(i)
                     break
         if self._list.currentRow() < 0 and self._list.count() > 0:
@@ -233,18 +239,21 @@ class HistoryDialog(QDialog):
         self._update_buttons()
         if self._list.count() == 0:
             self._preview.clear()
-            self._meta_label.setText(
-                tr("history.no_matches", "No entries match.") if query else tr("history.no_history", "No history yet.")
+            msg = (
+                tr("history.no_matches", "No entries match.")
+                if query
+                else tr("history.no_history", "No history yet.")
             )
+            self._meta_label.setText(msg)
 
-    def _current_entry_id(self) -> Optional[str]:
+    def _current_entry_id(self) -> str | None:
         item = self._list.currentItem()
         return item.data(Qt.ItemDataRole.UserRole) if item else None
 
-    def _current_entry(self) -> Optional[HistoryEntry]:
+    def _current_entry(self) -> HistoryEntry | None:
         return self._lookup_entry(self._current_entry_id())
 
-    def _lookup_entry(self, entry_id: Optional[str]) -> Optional[HistoryEntry]:
+    def _lookup_entry(self, entry_id: str | None) -> HistoryEntry | None:
         if not entry_id:
             return None
         for entry in self._all_entries:
@@ -254,8 +263,8 @@ class HistoryDialog(QDialog):
 
     def _on_selection_changed(
         self,
-        current: Optional[QListWidgetItem] = None,
-        previous: Optional[QListWidgetItem] = None,
+        current: QListWidgetItem | None = None,
+        previous: QListWidgetItem | None = None,
     ) -> None:
         if previous is not None:
             old_widget = self._list.itemWidget(previous)
@@ -298,13 +307,17 @@ class HistoryDialog(QDialog):
     def _copy_entry_id(self, entry_id: str) -> None:
         entry = self._lookup_entry(entry_id)
         if entry is not None:
-            QGuiApplication.clipboard().setText(entry.text)
+            clipboard = QGuiApplication.clipboard()
+            if clipboard is not None:
+                clipboard.setText(entry.text)
 
     @pyqtSlot()
     def _copy_selected(self) -> None:
         entry = self._current_entry()
         if entry is not None:
-            QGuiApplication.clipboard().setText(entry.text)
+            clipboard = QGuiApplication.clipboard()
+            if clipboard is not None:
+                clipboard.setText(entry.text)
 
     @pyqtSlot(str)
     def _delete_entry_id(self, entry_id: str) -> None:

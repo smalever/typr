@@ -2,7 +2,6 @@
 
 import threading
 from pathlib import Path
-from typing import Optional
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
@@ -11,7 +10,7 @@ from typr.utils.logger import logger
 
 try:
     import evdev
-    from evdev import InputDevice, categorize, ecodes
+    from evdev import InputDevice, ecodes
 
     EVDEV_AVAILABLE = True
 except ImportError:
@@ -65,11 +64,11 @@ class HotkeyManager(QObject):
     recording_stopped = pyqtSignal()
     hotkey_error = pyqtSignal(str)
 
-    def __init__(self, config: Optional[HotkeyConfig] = None, parent: Optional[QObject] = None):
+    def __init__(self, config: HotkeyConfig | None = None, parent: QObject | None = None):
         super().__init__(parent)
         self.config = config or HotkeyConfig()
         self._devices: list = []
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._running = False
         self._registered = False
 
@@ -268,14 +267,15 @@ class HotkeyManager(QObject):
                         if ecodes.KEY_SPACE in keys or ecodes.KEY_A in keys:
                             devices_by_fd[device.fd] = device
                             self._devices.append(device)
-                            logger.info(f"Dynamically added keyboard: {device.name} ({device.path})")
+                            logger.info(
+                                f"Dynamically added keyboard: {device.name} ({device.path})"
+                            )
                 except PermissionError:
                     pass
                 except Exception as e:
                     logger.debug(f"Error checking new device {path}: {e}")
         except Exception as e:
             logger.debug(f"Failed to scan for new devices: {e}")
-
 
     def _handle_key_event(self, event) -> None:
         """Handle a key press/release event."""

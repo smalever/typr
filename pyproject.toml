@@ -37,6 +37,7 @@ dev = [
     "pytest-qt>=4.2",
     "mypy>=1.0",
     "ruff>=0.1",
+    "types-pyaudio>=0.2.16",
 ]
 
 [project.scripts]
@@ -50,4 +51,6 @@ packages = ["src/typr"]
 
 [tool.ruff]
 line-length = 100
+
+[tool.ruff.lint]
 select = ["E", "F", "I", "UP"]

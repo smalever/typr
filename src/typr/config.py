@@ -4,11 +4,13 @@ import json
 import os
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 
 def _coerce(dc_cls, value: Any):
-    """Build a dataclass from a dict, ignoring unknown keys; pass through if already correct type."""
+    """Build a dataclass from a dict, ignoring unknown keys;
+    pass through if already correct type.
+    """
     if isinstance(value, dc_cls):
         return value
     if not isinstance(value, dict):
@@ -21,7 +23,7 @@ def _coerce(dc_cls, value: Any):
 class AudioConfig:
     """Audio recording configuration."""
 
-    input_device: Optional[str] = None  # None = default device
+    input_device: str | None = None  # None = default device
     sample_rate: int = 16000
     channels: int = 1
 
@@ -31,7 +33,7 @@ class TranscriptionConfig:
     """Transcription settings."""
 
     model: str = "whisper-1"  # whisper-1, gpt-4o-transcribe, gpt-4o-mini-transcribe
-    language: Optional[str] = None  # None = auto-detect
+    language: str | None = None  # None = auto-detect
     mode: str = "push_to_talk"  # push_to_talk, live
     prompt: str = ""  # Context prompt for better accuracy
 

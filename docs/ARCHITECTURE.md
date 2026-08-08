@@ -27,7 +27,8 @@ HotkeyManager / TrayIcon
 - `TextInjector` - Unicode paste через desktop clipboard и virtual keyboard `/dev/uinput`.
 - `HistoryManager` - локальная JSON history с ограничением количества записей.
 - `AppConfig` - tolerant JSON loading, backup и atomic persistence пользовательских настроек.
-- `TrayIcon`, `SettingsDialog`, `HistoryDialog` - desktop UI и пользовательские действия.
+- `TrayIcon`, `SettingsDialog`, `HistoryDialog` - desktop UI и пользовательские действия;
+  сетевые пробы `SettingsDialog` выполняются через Qt thread pool.
 
 ## Инварианты
 
@@ -40,7 +41,8 @@ HotkeyManager / TrayIcon
 7. API key хранится только в пользовательском config с mode `0600` и не попадает в history, logs, tests или документацию.
 8. Поврежденный config не перезаписывается автоматическим save.
 9. UI state является проекцией `AppState`; tray actions не создают параллельный recording/transcription pipeline.
-10. Cleanup освобождает audio stream, input devices, virtual keyboard и clipboard helper process.
+10. Cleanup останавливает clipboard restore timer и освобождает audio stream, input devices,
+    virtual keyboard и текущий clipboard helper process, включая helper восстановленного clipboard.
 
 ## Данные И Системные Границы
 
