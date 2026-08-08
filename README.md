@@ -17,6 +17,7 @@
   <a href="#установка">Установка</a> •
   <a href="#использование">Использование</a> •
   <a href="#настройка">Настройка</a> •
+  <a href="#разработка">Разработка</a> •
   <a href="#устранение-неполадок">Устранение неполадок</a>
 </p>
 
@@ -226,6 +227,31 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 - **Низкоуровневый ввод**: evdev / uinput (прямой доступ к устройствам ввода Linux)
 - **Сетевой клиент**: httpx
 - **Clipboard backends**: `wl-clipboard` (Wayland), `xclip`/`xsel` (X11; выбирается автоматически установщиком)
+
+---
+
+## Разработка
+
+Карта архитектуры, developer workflow и правила синхронизации code/tests/docs находятся в [docs/README.md](docs/README.md).
+
+Проект содержит адаптированные Kilo skills в `.kilo/skills/`:
+- `typr-codebase` — навигация по runtime-компонентам и правила безопасных изменений;
+- `subagent-coordination` — делегирование изолированных задач;
+- `code-review` — ревизия незакоммиченных изменений с проверками и исправлениями;
+- `git-commit` — безопасная подготовка локального commit после review.
+
+Kilo загружает их через проектный `kilo.json`. После изменения skill перезагрузите project configuration или начните новую сессию.
+
+Базовые проверки:
+
+```bash
+./.venv/bin/pip install -e '.[dev]'
+./.venv/bin/pytest
+./.venv/bin/ruff check tests/test_project_skills.py
+bash -n install.sh uninstall.sh
+```
+
+Hardware-dependent проверка микрофона, глобального хоткея, clipboard и `/dev/uinput` выполняется вручную в видимой Linux desktop session.
 
 ---
 
