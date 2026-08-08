@@ -8,7 +8,7 @@
 <p align="center">
   <a href="https://opensource.org/licenses/MIT"><img alt="Лицензия MIT" src="https://img.shields.io/badge/License-MIT-blue.svg"></a>
   <a href="https://www.python.org/downloads/"><img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10+-blue.svg"></a>
-  <a href="https://github.com/murtaza-nasir/typr/releases/latest"><img alt="Последняя версия" src="https://img.shields.io/badge/version-0.1.0-brightgreen.svg"></a>
+  <a href="https://github.com/murtaza-nasir/typr/releases/latest"><img alt="Последняя версия" src="https://img.shields.io/badge/version-0.2.0-brightgreen.svg"></a>
 </p>
 
 <p align="center">
@@ -58,7 +58,7 @@
 - **Улучшенная отзывчивость** — сетевой тайм-аут Whisper сокращен до 15 секунд для предотвращения зависания статуса.
 - **Адаптивный установщик** — выбирает только нужный clipboard package (`wl-clipboard` для Wayland, `xclip`/`xsel` для X11), а не устанавливает все сразу.
 - **Preflight-проверка зависимостей** — перед установкой показывает полный список отсутствующих пакетов и запрашивает одно подтверждение.
-- **Локализация установщика** — сообщения в `install.sh` на русском при `ru`-локали консоли, иначе на английском.
+- **Локализация скриптов** — сообщения в `install.sh` и `uninstall.sh` на русском при `ru`-локали консоли, иначе на английском.
 
 ---
 
@@ -211,9 +211,10 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 - локальные настройки, кэш, историю и `.venv`;
 - legacy user-level `pip` install (если был).
 
-Дополнительно скрипт интерактивно предлагает:
-- удалить локальный Parakeet STT Docker-контейнер (`docker compose down` в `~/docker/parakeet-tdt`);
-- удалить каталог `~/docker/parakeet-tdt` целиком (включая модели).
+Если установлен локальный Parakeet, скрипт спрашивает, оставить ли контейнер и модели для
+будущей переустановки Typr. По умолчанию они сохраняются. При ответе `no` деинсталлятор
+выполняет `docker compose down` и удаляет каталог `~/docker/parakeet-tdt` вместе с моделями.
+Если контейнер безопасно остановить не удалось, каталог сохраняется для повторной попытки.
 
 Примечание: папка самого репозитория Typr не удаляется.
 

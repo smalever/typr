@@ -77,3 +77,14 @@ Installer preflight без изменений системы:
 ## Документация
 
 При изменении behavior обновляй code, tests и документы по `DOCUMENTATION_POLICY.md` в одном изменении. Корневой `README.md` остается пользовательским руководством; `docs/` содержит developer и architecture contracts.
+
+## Версионирование
+
+Версия приложения следует SemVer и повышается непосредственно перед каждым commit после завершения review:
+
+```bash
+python3 scripts/bump_version.py patch  # либо minor / major
+python3 scripts/bump_version.py --check
+```
+
+`patch` используется для небольших совместимых исправлений и внутренних изменений, `minor` - для обратно совместимых функций и существенных улучшений, `major` - для несовместимых или глобальных изменений. При смешанном commit выбирается максимальный уровень. Скрипт синхронизирует package metadata, `__version__`, About-строки RU/EN и badge в `README.md`; bump включается в тот же commit, а не оформляется отдельно.

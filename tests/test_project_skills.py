@@ -3,6 +3,8 @@
 import json
 import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -50,3 +52,38 @@ def test_documentation_map_references_registered_skills() -> None:
     for skill_file in SKILLS_ROOT.glob("*/SKILL.md"):
         relative_path = Path(os.path.relpath(skill_file, PROJECT_ROOT / "docs")).as_posix()
         assert relative_path in docs_map
+
+
+def test_git_commit_skill_requires_semantic_version_bump() -> None:
+    commit_skill = (SKILLS_ROOT / "git-commit" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "scripts/bump_version.py patch" in commit_skill
+    assert "minor / major" in commit_skill
+    assert "непосредственно перед staging" in commit_skill
+
+
+def test_application_versions_are_synchronized() -> None:
+    pyproject = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    package = (PROJECT_ROOT / "src" / "typr" / "__init__.py").read_text(encoding="utf-8")
+    translations = (
+        PROJECT_ROOT / "src" / "typr" / "utils" / "i18n.py"
+    ).read_text(encoding="utf-8")
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+
+    version = re.search(r'(?m)^version = "(\d+\.\d+\.\d+)"$', pyproject)
+    assert version is not None
+    expected = version.group(1)
+
+    assert f'__version__ = "{expected}"' in package
+    assert f'"settings.about.version": "Version {expected}"' in translations
+    assert f'"settings.about.version": "Версия {expected}"' in translations
+    assert f"badge/version-{expected}-brightgreen.svg" in readme
+
+    result = subprocess.run(
+        [sys.executable, "scripts/bump_version.py", "--check"],
+        cwd=PROJECT_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout.strip() == expected

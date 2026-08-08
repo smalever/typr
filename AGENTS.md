@@ -7,6 +7,7 @@
 - Не открывай и не публикуй пользовательский `~/.config/typr/config.json`: он может содержать API key. В tests используй временный HOME и фиктивные значения.
 - При изменениях кода синхронизируй tests и docs по `docs/DOCUMENTATION_POLICY.md`, затем проверь `git status` и `git diff`. Не включай `.venv`, caches, logs и другие generated artifacts.
 - Не отменяй чужие изменения и не используй destructive git-команды. Commit и push выполняй только по явному запросу.
+- Перед каждым commit после review и непосредственно перед staging повысь SemVer приложения через `scripts/bump_version.py` по правилам `.kilo/skills/git-commit/SKILL.md`; version bump входит в тот же commit.
 
 ## Работа С Субагентами
 
