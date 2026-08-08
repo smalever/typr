@@ -32,7 +32,7 @@ class AudioConfig:
 class TranscriptionConfig:
     """Transcription settings."""
 
-    model: str = "whisper-1"  # whisper-1, gpt-4o-transcribe, gpt-4o-mini-transcribe
+    model: str = "parakeet-tdt-0.6b-v3-onnx/"
     language: str | None = None  # None = auto-detect
     mode: str = "push_to_talk"  # push_to_talk, live
     prompt: str = ""  # Context prompt for better accuracy
@@ -42,7 +42,7 @@ class TranscriptionConfig:
 class HotkeyConfig:
     """Hotkey settings."""
 
-    push_to_talk: str = "Meta+Shift+Space"
+    push_to_talk: str = "Ctrl+Alt+Z"
     cancel_recording: str = "Escape"
 
 
@@ -68,7 +68,7 @@ class AppConfig:
     """Main application configuration."""
 
     api_key: str = ""
-    api_base_url: str = "https://api.openai.com/v1"
+    api_base_url: str = "http://127.0.0.1:5092/v1"
     audio: AudioConfig = field(default_factory=AudioConfig)
     transcription: TranscriptionConfig = field(default_factory=TranscriptionConfig)
     hotkeys: HotkeyConfig = field(default_factory=HotkeyConfig)

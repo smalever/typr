@@ -129,8 +129,9 @@ class SettingsDialog(QDialog):
 
     settings_saved = pyqtSignal()
 
-    # Default Whisper models (for OpenAI)
+    # Common models for the default local endpoint and OpenAI-compatible APIs
     DEFAULT_MODELS = [
+        ("parakeet-tdt-0.6b-v3-onnx/", "Parakeet TDT 0.6B v3 ONNX"),
         ("whisper-1", "Whisper 1 (Standard)"),
         ("gpt-4o-transcribe", "GPT-4o Transcribe (Better accuracy)"),
         ("gpt-4o-mini-transcribe", "GPT-4o Mini Transcribe (Faster)"),
@@ -290,7 +291,7 @@ class SettingsDialog(QDialog):
         # API base URL
         self._api_base_edit = QLineEdit()
         self._api_base_edit.setPlaceholderText(
-            tr("settings.api.base_url_placeholder", "https://api.openai.com/v1")
+            tr("settings.api.base_url_placeholder", "http://127.0.0.1:5092/v1")
         )
         api_layout.addRow(tr("settings.api.base_url", "Base URL:"), self._api_base_edit)
 
@@ -517,7 +518,7 @@ class SettingsDialog(QDialog):
         """Save settings from UI to config."""
         # API
         self.config.api_key = self._api_key_edit.text()
-        self.config.api_base_url = self._api_base_edit.text() or "https://api.openai.com/v1"
+        self.config.api_base_url = self._api_base_edit.text() or "http://127.0.0.1:5092/v1"
 
         # Transcription - handle both preset (data) and custom (text) models
         model_data = self._model_combo.currentData()
@@ -574,7 +575,9 @@ class SettingsDialog(QDialog):
     def _fetch_models(self) -> None:
         """Fetch available models from the API endpoint."""
         base_url = (
-            self._api_base_edit.text() or self.config.api_base_url or "https://api.openai.com/v1"
+            self._api_base_edit.text()
+            or self.config.api_base_url
+            or "http://127.0.0.1:5092/v1"
         ).rstrip("/")
         api_key = self._api_key_edit.text()
 
@@ -641,7 +644,7 @@ class SettingsDialog(QDialog):
     def _test_connection(self) -> None:
         """Test API connection."""
         api_key = self._api_key_edit.text()
-        base_url = (self._api_base_edit.text() or "https://api.openai.com/v1").rstrip("/")
+        base_url = (self._api_base_edit.text() or "http://127.0.0.1:5092/v1").rstrip("/")
         self._api_test_status.setStyleSheet("")
         self._api_test_status.setText(tr("settings.api.test.checking", "Checking connection..."))
         self._test_connection_btn.setEnabled(False)

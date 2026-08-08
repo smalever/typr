@@ -90,8 +90,8 @@ class WhisperTranscriber(QObject):
     def __init__(
         self,
         api_key: str,
-        api_base_url: str = "https://api.openai.com/v1",
-        model: str = "whisper-1",
+        api_base_url: str = "http://127.0.0.1:5092/v1",
+        model: str = "parakeet-tdt-0.6b-v3-onnx/",
         parent: QObject | None = None,
     ):
         super().__init__(parent)

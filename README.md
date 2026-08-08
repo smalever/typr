@@ -8,7 +8,7 @@
 <p align="center">
   <a href="https://opensource.org/licenses/MIT"><img alt="Лицензия MIT" src="https://img.shields.io/badge/License-MIT-blue.svg"></a>
   <a href="https://www.python.org/downloads/"><img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10+-blue.svg"></a>
-  <a href="https://github.com/smalever/typr/releases/latest"><img alt="Последняя версия" src="https://img.shields.io/badge/version-0.2.2-brightgreen.svg"></a>
+  <a href="https://github.com/smalever/typr/releases/latest"><img alt="Последняя версия" src="https://img.shields.io/badge/version-0.2.3-brightgreen.svg"></a>
 </p>
 
 <p align="center">
@@ -121,6 +121,9 @@ cd typr
 После успешного запуска выводится endpoint для настроек Typr:
 `http://127.0.0.1:5092/v1`
 
+Для новой конфигурации Typr этот локальный endpoint, модель
+`parakeet-tdt-0.6b-v3-onnx/` и горячая клавиша `Ctrl+Alt+Z` уже выбраны по умолчанию.
+
 > [!NOTE]
 > После первой установки может потребоваться выйти из системы (Log Out) и зайти снова, чтобы применились права группы `input`.
 
@@ -143,10 +146,10 @@ groups | grep input
 
 1. **Запуск** — запустите Typr из меню ваших приложений или через терминал с помощью команды `./.venv/bin/typr` (находясь в папке проекта).
 2. **Настройка** — нажмите правой кнопкой мыши по иконке в трее → **Settings**.
-   - Перейдите во вкладку **API** → введите `Base URL` и API-ключ (если требуется).
-   - Для локального Parakeet используйте `Base URL`: `http://127.0.0.1:5092/v1`.
-   - Во вкладке **General** → нажмите **Fetch**, чтобы получить список доступных моделей с сервера, и выберите нужную.
-3. **Запись** — **зажмите** сочетание клавиш `Meta+Shift+Space` (по умолчанию) и говорите.
+   - По умолчанию выбран `Base URL`: `http://127.0.0.1:5092/v1`; API-ключ для локального Parakeet не требуется.
+   - По умолчанию выбрана модель `parakeet-tdt-0.6b-v3-onnx/`.
+   - Для другого сервера измените `Base URL`, при необходимости введите API-ключ, затем во вкладке **General** нажмите **Fetch** и выберите модель.
+3. **Запись** — **зажмите** сочетание клавиш `Ctrl+Alt+Z` (по умолчанию) и говорите.
 4. **Вставка** — **отпустите** клавиши. Текст распознается и вставится в текстовое поле, где стоял фокус.
 
 ---
@@ -155,6 +158,22 @@ groups | grep input
 
 Конфигурационный файл хранится по пути: `~/.config/typr/config.json`
 
+Новая конфигурация создаётся со следующими основными значениями по умолчанию:
+
+```json
+{
+  "api_base_url": "http://127.0.0.1:5092/v1",
+  "transcription": {
+    "model": "parakeet-tdt-0.6b-v3-onnx/"
+  },
+  "hotkeys": {
+    "push_to_talk": "Ctrl+Alt+Z"
+  }
+}
+```
+
+Уже сохранённые пользовательские настройки автоматически не перезаписываются.
+
 ### Горячие клавиши
 
 Настройка доступна через графический интерфейс (Settings → Hotkeys) или вручную в конфигурационном файле:
@@ -162,12 +181,12 @@ groups | grep input
 ```json
 {
   "hotkeys": {
-    "push_to_talk": "Meta+Shift+Space"
+    "push_to_talk": "Ctrl+Alt+Z"
   }
 }
 ```
 
-Поддерживаемый формат: `Модификатор+Модификатор+Клавиша` (например, `Meta+Shift+Space`).
+Поддерживаемый формат: `Модификатор+Модификатор+Клавиша` (например, `Ctrl+Alt+Z`).
 
 ---
 

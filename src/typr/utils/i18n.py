@@ -114,7 +114,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "settings.api.key_show": "Show",
         "settings.api.key_hide": "Hide",
         "settings.api.base_url": "Base URL:",
-        "settings.api.base_url_placeholder": "https://api.openai.com/v1",
+        "settings.api.base_url_placeholder": "http://127.0.0.1:5092/v1",
         "settings.api.test_connection": "Test Connection",
         "settings.api.info": (
             "Get your API key from "
@@ -147,7 +147,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "Open the History window from the tray icon to browse and copy past transcriptions."
         ),
         "settings.about.desc": "Speech-to-text for Linux using OpenAI and Parakeet-compatible APIs",
-        "settings.about.version": "Version 0.2.2",
+        "settings.about.version": "Version 0.2.3",
         # Test Connection Outputs
         "settings.api.test.checking": "Checking connection...",
         "settings.api.test.valid": "Settings are valid.",
@@ -256,7 +256,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "settings.api.key_show": "Показать",
         "settings.api.key_hide": "Скрыть",
         "settings.api.base_url": "Базовый URL:",
-        "settings.api.base_url_placeholder": "https://api.openai.com/v1",
+        "settings.api.base_url_placeholder": "http://127.0.0.1:5092/v1",
         "settings.api.test_connection": "Проверить соединение",
         "settings.api.info": (
             "Получите API-ключ на "
@@ -291,7 +291,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "settings.about.desc": (
             "Голосовой ввод для Linux с использованием OpenAI и Parakeet-совместимых API"
         ),
-        "settings.about.version": "Версия 0.2.2",
+        "settings.about.version": "Версия 0.2.3",
         # Test Connection Outputs
         "settings.api.test.checking": "Проверка соединения...",
         "settings.api.test.valid": "Настройки корректны.",

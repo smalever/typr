@@ -1,3 +1,3 @@
 """Typr - Speech-to-text for Linux with OpenAI Whisper."""
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"

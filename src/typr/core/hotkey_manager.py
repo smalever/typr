@@ -83,7 +83,7 @@ class HotkeyManager(QObject):
         self._parse_hotkey(self.config.push_to_talk)
 
     def _parse_hotkey(self, hotkey_str: str) -> None:
-        """Parse hotkey string like 'Meta+Shift+Space' into components."""
+        """Parse hotkey string like 'Ctrl+Alt+Z' into components."""
         parts = hotkey_str.lower().replace(" ", "").split("+")
 
         self._target_modifiers = set()

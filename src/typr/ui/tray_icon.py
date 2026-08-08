@@ -44,7 +44,7 @@ class TrayIcon(QSystemTrayIcon):
         TrayState.ERROR: "Error - Right-click for options",
     }
 
-    def __init__(self, hotkey: str = "Meta+Shift+Space", parent: QWidget | None = None):
+    def __init__(self, hotkey: str = "Ctrl+Alt+Z", parent: QWidget | None = None):
         super().__init__(parent)
         self._state = TrayState.IDLE
         self._hotkey = hotkey
