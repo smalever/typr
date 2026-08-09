@@ -31,20 +31,28 @@ msg() {
         en:removing_venv) echo "Removing virtual environment..." ;;
         ru:venv_removed) echo "Виртуальное окружение удалено." ;;
         en:venv_removed) echo "Virtual environment removed." ;;
-        ru:keep_stt_prompt) echo "Оставить локальный контейнер Parakeet и модели для будущей переустановки Typr? [Y/n]: " ;;
-        en:keep_stt_prompt) echo "Keep the local Parakeet container and models for a future Typr reinstall? [Y/n]: " ;;
-        ru:stopping_stt) echo "Останавливаю и удаляю контейнер Parakeet..." ;;
-        en:stopping_stt) echo "Stopping and removing Parakeet container..." ;;
+        ru:remove_stt_data_prompt) echo "Удалить также сохраненные модели и файлы обоих STT-серверов? [y/N]: " ;;
+        en:remove_stt_data_prompt) echo "Also remove saved models and files for both STT servers? [y/N]: " ;;
+        ru:stopping_parakeet) echo "Останавливаю и удаляю контейнер Parakeet..." ;;
+        en:stopping_parakeet) echo "Stopping and removing the Parakeet container..." ;;
+        ru:stopping_gigastt) echo "Останавливаю и удаляю контейнер GigaSTT..." ;;
+        en:stopping_gigastt) echo "Stopping and removing the GigaSTT container..." ;;
         ru:docker_sudo) echo "Для доступа к Docker могут требоваться права sudo. Повторяю через sudo..." ;;
         en:docker_sudo) echo "Docker access may require sudo. Retrying with sudo..." ;;
         ru:compose_missing) echo "Docker Compose не найден, остановка контейнера пропущена." ;;
         en:compose_missing) echo "Docker Compose not found, skipping container shutdown." ;;
-        ru:stt_cleanup_failed) echo "Контейнер Parakeet не удалось удалить. Каталог и модели сохранены для безопасного повторного удаления: $2" ;;
-        en:stt_cleanup_failed) echo "Failed to remove the Parakeet container. The directory and models were kept for a safe retry: $2" ;;
-        ru:stt_removed) echo "Файлы контейнера Parakeet и модели удалены: $2" ;;
-        en:stt_removed) echo "Removed Parakeet container files and models: $2" ;;
-        ru:stt_kept) echo "Файлы контейнера Parakeet и модели сохранены: $2" ;;
-        en:stt_kept) echo "Kept Parakeet container files and models: $2" ;;
+        ru:stt_cleanup_failed) echo "Не удалось удалить контейнер $2. Его модели сохранены для безопасной повторной попытки." ;;
+        en:stt_cleanup_failed) echo "Failed to remove the $2 container. Its models were kept for a safe retry." ;;
+        ru:stt_container_conflict) echo "Контейнер '$2' не похож на установленный Typr STT-сервер и оставлен без изменений (image: $3)." ;;
+        en:stt_container_conflict) echo "Container '$2' does not look like a Typr STT server and was left unchanged (image: $3)." ;;
+        ru:stt_containers_removed) echo "Локальные контейнеры Parakeet и GigaSTT удалены, если они были установлены." ;;
+        en:stt_containers_removed) echo "Local Parakeet and GigaSTT containers were removed if installed." ;;
+        ru:stt_data_removed) echo "Сохраненные модели и файлы STT удалены." ;;
+        en:stt_data_removed) echo "Saved STT models and files were removed." ;;
+        ru:stt_data_partial) echo "Часть STT-данных не удалось удалить; она сохранена для безопасной повторной попытки." ;;
+        en:stt_data_partial) echo "Some STT data could not be removed and was kept for a safe retry." ;;
+        ru:stt_data_kept) echo "Сохраненные модели STT оставлены для быстрой переустановки." ;;
+        en:stt_data_kept) echo "Saved STT models were kept for a faster reinstall." ;;
         ru:udev_prompt) echo "Удалить правило udev для доступа к /dev/uinput ($2)? [y/N]: " ;;
         en:udev_prompt) echo "Remove the custom udev rule for /dev/uinput access ($2)? [y/N]: " ;;
         ru:removing_udev) echo "Удаляю правило udev, могут потребоваться права sudo..." ;;
@@ -125,44 +133,98 @@ if [ -d "$VENV_DIR" ]; then
     msg venv_removed
 fi
 
-# Keep the optional local STT installation by default for faster reinstall.
+# Remove both supported STT containers. Model data is kept by default.
 PARAKEET_DIR="${HOME:-$(getent passwd "$USER" | cut -d: -f6)}/docker/parakeet-tdt"
-if [ -d "$PARAKEET_DIR" ]; then
-    echo
-    read -rp "$(msg keep_stt_prompt)" keep_stt
-    keep_stt=${keep_stt:-y}
-    if [[ "$keep_stt" =~ ^[NnНн]$ ]]; then
-        COMPOSE_CMD=()
-        stt_shutdown_ok=false
-        if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-            COMPOSE_CMD=(docker compose)
-        elif command -v docker-compose >/dev/null 2>&1; then
-            COMPOSE_CMD=(docker-compose)
+GIGASTT_CONTAINER="gigastt"
+GIGASTT_VOLUME="gigastt-models"
+DOCKER_CMD=()
+if command -v docker >/dev/null 2>&1; then
+    if docker info >/dev/null 2>&1; then
+        DOCKER_CMD=(docker)
+    elif sudo -n docker info >/dev/null 2>&1; then
+        DOCKER_CMD=(sudo docker)
+    else
+        msg docker_sudo
+        if sudo -v && sudo docker info >/dev/null 2>&1; then
+            DOCKER_CMD=(sudo docker)
         fi
+    fi
+fi
 
-        if [ ${#COMPOSE_CMD[@]} -gt 0 ]; then
-            msg stopping_stt
-            if (cd "$PARAKEET_DIR" && "${COMPOSE_CMD[@]}" down); then
-                stt_shutdown_ok=true
-            else
-                msg docker_sudo
-                if sudo -v && (cd "$PARAKEET_DIR" && sudo "${COMPOSE_CMD[@]}" down); then
-                    stt_shutdown_ok=true
-                fi
+parakeet_removed=true
+gigastt_removed=true
+
+if [ ${#DOCKER_CMD[@]} -gt 0 ]; then
+    for parakeet_container in parakeet-tdt parakeet-cpu; do
+        if ! "${DOCKER_CMD[@]}" container inspect "$parakeet_container" >/dev/null 2>&1; then
+            continue
+        fi
+        parakeet_image=$("${DOCKER_CMD[@]}" container inspect --format '{{.Config.Image}}' "$parakeet_container")
+        parakeet_service=$("${DOCKER_CMD[@]}" container inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$parakeet_container")
+        parakeet_label=$("${DOCKER_CMD[@]}" container inspect --format '{{index .Config.Labels "io.typr.stt"}}' "$parakeet_container")
+        if [ "$parakeet_image" = "parakeet-tdt:cpu" ] \
+            || [ "$parakeet_service" = "parakeet" ] \
+            || [ "$parakeet_service" = "parakeet-cpu" ] \
+            || [ "$parakeet_label" = "parakeet" ]; then
+            msg stopping_parakeet
+            if ! "${DOCKER_CMD[@]}" rm -f "$parakeet_container" >/dev/null; then
+                parakeet_removed=false
+                msg stt_cleanup_failed "Parakeet"
             fi
         else
-            msg compose_missing
+            parakeet_removed=false
+            msg stt_container_conflict "$parakeet_container" "$parakeet_image"
         fi
+    done
 
-        if [ "$stt_shutdown_ok" = true ]; then
-            rm -rf "$PARAKEET_DIR"
-            msg stt_removed "$PARAKEET_DIR"
+    if "${DOCKER_CMD[@]}" container inspect "$GIGASTT_CONTAINER" >/dev/null 2>&1; then
+        gigastt_image=$("${DOCKER_CMD[@]}" container inspect --format '{{.Config.Image}}' "$GIGASTT_CONTAINER")
+        gigastt_label=$("${DOCKER_CMD[@]}" container inspect --format '{{index .Config.Labels "io.typr.stt"}}' "$GIGASTT_CONTAINER")
+        if [ "$gigastt_image" = "ghcr.io/ekhodzitsky/gigastt:latest" ] || [ "$gigastt_label" = "gigastt" ]; then
+            msg stopping_gigastt
+            if ! "${DOCKER_CMD[@]}" rm -f "$GIGASTT_CONTAINER" >/dev/null; then
+                gigastt_removed=false
+                msg stt_cleanup_failed "GigaSTT"
+            fi
         else
-            msg stt_cleanup_failed "$PARAKEET_DIR"
+            gigastt_removed=false
+            msg stt_container_conflict "$GIGASTT_CONTAINER" "$gigastt_image"
         fi
-    else
-        msg stt_kept "$PARAKEET_DIR"
     fi
+else
+    parakeet_removed=false
+    gigastt_removed=false
+fi
+
+if [ "$parakeet_removed" = true ] && [ "$gigastt_removed" = true ]; then
+    msg stt_containers_removed
+fi
+
+echo
+read -rp "$(msg remove_stt_data_prompt)" remove_stt_data
+remove_stt_data=${remove_stt_data:-n}
+if [[ "$remove_stt_data" =~ ^[YyДд]$ ]]; then
+    stt_data_removed=true
+    if [ "$parakeet_removed" = true ]; then
+        rm -rf "$PARAKEET_DIR"
+    elif [ -d "$PARAKEET_DIR" ]; then
+        stt_data_removed=false
+    fi
+    if [ "$gigastt_removed" = true ] && [ ${#DOCKER_CMD[@]} -gt 0 ]; then
+        if "${DOCKER_CMD[@]}" volume inspect "$GIGASTT_VOLUME" >/dev/null 2>&1 \
+            && ! "${DOCKER_CMD[@]}" volume rm "$GIGASTT_VOLUME" >/dev/null; then
+            stt_data_removed=false
+        fi
+    elif [ "$gigastt_removed" = false ]; then
+        stt_data_removed=false
+    fi
+    if [ "$stt_data_removed" = true ]; then
+        msg stt_data_removed
+    else
+        msg stt_data_partial
+    fi
+else
+    msg stt_data_kept
 fi
 
 # Clean up udev rules interactively

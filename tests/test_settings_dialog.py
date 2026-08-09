@@ -63,6 +63,25 @@ def test_request_models_falls_back_to_openapi_schema(monkeypatch) -> None:
     assert models == ["model-a", "model-b"]
 
 
+def test_request_models_accepts_single_model_object(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/models"
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "id": "gigaam-v3-rnnt",
+                "name": "GigaAM v3 RNN-T",
+                "variant": "rnnt",
+            },
+        )
+
+    with _mock_client(monkeypatch, handler):
+        models = settings_dialog._request_models("http://127.0.0.1:9876/v1", "")
+
+    assert models == ["gigaam-v3-rnnt"]
+
+
 def test_probe_api_accepts_transcription_fallback(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v1/models":

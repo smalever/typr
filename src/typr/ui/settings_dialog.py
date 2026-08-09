@@ -90,7 +90,12 @@ def _request_models(base_url: str, api_key: str) -> list[str]:
 
     models: list[str] = []
     if isinstance(data, dict):
-        raw_models = data.get("data", [])
+        if isinstance(data.get("data"), list):
+            raw_models = data["data"]
+        elif isinstance(data.get("id") or data.get("name"), str):
+            raw_models = [data]
+        else:
+            raw_models = []
     elif isinstance(data, list):
         raw_models = data
     else:

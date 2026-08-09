@@ -8,7 +8,7 @@
 <p align="center">
   <a href="https://opensource.org/licenses/MIT"><img alt="Лицензия MIT" src="https://img.shields.io/badge/License-MIT-blue.svg"></a>
   <a href="https://www.python.org/downloads/"><img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10+-blue.svg"></a>
-  <a href="https://github.com/smalever/typr/releases/latest"><img alt="Последняя версия" src="https://img.shields.io/badge/version-0.2.4-brightgreen.svg"></a>
+  <a href="https://github.com/smalever/typr/releases/latest"><img alt="Последняя версия" src="https://img.shields.io/badge/version-0.3.0-brightgreen.svg"></a>
 </p>
 
 <p align="center">
@@ -88,7 +88,7 @@
 - выполнит полную preflight-проверку зависимостей;
 - покажет список отсутствующих пакетов и попросит одно подтверждение;
 - запросит `sudo` только перед реальной установкой;
-- предложит опционально развернуть локальный STT-контейнер Parakeet;
+- предложит выбрать Parakeet, GigaSTT, оба локальных STT-контейнера или пропустить этот шаг;
 - настроит Python venv с `pytest` и `ruff`, desktop entries и `udev`-правила.
 
 ```bash
@@ -107,21 +107,47 @@ cd typr
 
 `--check` работает как алиас `--dry-run`.
 
-### Опциональный локальный STT (Parakeet)
+### Опциональный локальный STT
 
-В начале установки скрипт спрашивает, нужно ли локальное распознавание речи в Docker.
+В начале установки скрипт предлагает выбрать локальный STT-сервер:
 
-Если ответ `yes`, установщик:
+1. **Parakeet TDT 0.6B v3 INT8** — быстрый CPU-сервер с автоматическим
+   определением 25 языков. Это вариант по умолчанию для Typr.
+2. **GigaSTT с GigaAM v3 RNNT INT8** — компактный CPU-сервер,
+   специализированный для точного распознавания русской речи.
+3. Оба контейнера одновременно.
+4. Пропустить установку локального STT.
+
+Для Parakeet установщик:
 - использует каталог `~/docker/parakeet-tdt`;
 - если каталога нет, автоматически клонирует репозиторий  
   `https://github.com/groxaxo/parakeet-tdt-0.6b-v3-fastapi-openai`;
-- запускает контейнер через `docker compose up -d` (или `docker-compose up -d`);
+- собирает официальный `Dockerfile.cpu` и запускает отдельный CPU-контейнер
+  `parakeet-tdt` с restart policy `unless-stopped`;
 - предзагружает модель `parakeet-tdt-0.6b-v3` при старте контейнера и держит её
   в памяти, пока пользователь не выберет другую модель;
+- хранит скачанные модели в `~/docker/parakeet-tdt/models`;
+- публикует API только на loopback-адресе `127.0.0.1:5092`, без доступа из локальной сети;
 - при необходимости запрашивает запуск через `sudo`.
 
-После успешного запуска выводится endpoint для настроек Typr:
-`http://127.0.0.1:5092/v1`
+Base URL Parakeet: `http://127.0.0.1:5092/v1`.
+
+Для GigaSTT установщик:
+- использует официальный CPU image `ghcr.io/ekhodzitsky/gigastt:latest`;
+- запускает отдельный контейнер `gigastt` с restart policy `unless-stopped`;
+- сохраняет автоматически загруженную GigaAM v3 RNNT INT8 в Docker volume
+  `gigastt-models`;
+- внутри контейнера хранит модель по пути `/home/gigastt/.gigastt/models`, а на
+  хосте Docker хранит содержимое в volume `gigastt-models`;
+- публикует API только на loopback-адресе `127.0.0.1:9876`, без доступа из локальной сети;
+- выводит Base URL `http://127.0.0.1:9876/v1` и модель `gigaam-v3-rnnt` после запуска.
+
+Typr поддерживает одиночный объект модели, который GigaSTT возвращает из `/v1/models`,
+поэтому кнопка **Fetch** показывает `gigaam-v3-rnnt` в списке моделей.
+
+При повторной установке существующие контейнеры запускаются снова, а сохраненные модели
+используются без повторной загрузки. Если имя `gigastt` занято контейнером с другим image,
+установщик завершает STT-шаг с ошибкой и не изменяет этот контейнер.
 
 Для новой конфигурации Typr этот локальный endpoint, модель
 `parakeet-tdt-0.6b-v3` и горячая клавиша `Ctrl+Alt+Z` уже выбраны по умолчанию.
@@ -232,10 +258,11 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 - локальные настройки, кэш, историю и `.venv`;
 - legacy user-level `pip` install (если был).
 
-Если установлен локальный Parakeet, скрипт спрашивает, оставить ли контейнер и модели для
-будущей переустановки Typr. По умолчанию они сохраняются. При ответе `no` деинсталлятор
-выполняет `docker compose down` и удаляет каталог `~/docker/parakeet-tdt` вместе с моделями.
-Если контейнер безопасно остановить не удалось, каталог сохраняется для повторной попытки.
+Деинсталлятор останавливает и удаляет оба поддерживаемых контейнера, `parakeet-tdt` и
+`gigastt`, если они существуют. Затем он отдельно предлагает удалить сохраненные модели:
+каталог `~/docker/parakeet-tdt` и Docker volume `gigastt-models`. По умолчанию модели
+сохраняются для быстрой переустановки. Если контейнер безопасно удалить не удалось,
+связанные с ним данные не удаляются.
 
 Примечание: папка самого репозитория Typr не удаляется.
 

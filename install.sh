@@ -17,16 +17,32 @@ msg() {
     case "$UI_LANG:$key" in
         ru:title) echo "  Установщик Typr для Linux" ;;
         en:title) echo "  Typr Installer for Linux" ;;
-        ru:stt_prompt) echo "Нужно настроить локальное распознавание речи через Docker контейнер Parakeet? [y/N]: " ;;
-        en:stt_prompt) echo "Do you want to set up local speech recognition using the Parakeet Docker container? [y/N]: " ;;
-        ru:stt_dryrun_yes) echo "Режим dry-run: контейнер локального распознавания был бы установлен." ;;
-        en:stt_dryrun_yes) echo "Dry-run mode: local speech recognition container would be installed." ;;
+        ru:stt_intro) echo "Выберите локальный STT-контейнер и модель:" ;;
+        en:stt_intro) echo "Choose a local STT container and model:" ;;
+        ru:stt_parakeet_desc) echo "1. Parakeet TDT 0.6B v3 INT8 — очень быстрый CPU STT, автоопределение 25 языков." ;;
+        en:stt_parakeet_desc) echo "1. Parakeet TDT 0.6B v3 INT8 — very fast CPU STT with automatic detection of 25 languages." ;;
+        ru:stt_gigastt_desc) echo "2. GigaSTT / GigaAM v3 RNNT INT8 — специализирован для русского, компактная модель и хорошая точность русской речи." ;;
+        en:stt_gigastt_desc) echo "2. GigaSTT / GigaAM v3 RNNT INT8 — Russian-focused, compact, and accurate for Russian speech." ;;
+        ru:stt_both_desc) echo "3. Установить оба контейнера." ;;
+        en:stt_both_desc) echo "3. Install both containers." ;;
+        ru:stt_none_desc) echo "4. Не устанавливать локальный STT." ;;
+        en:stt_none_desc) echo "4. Do not install local STT." ;;
+        ru:stt_choice_prompt) echo "Ваш выбор [1]: " ;;
+        en:stt_choice_prompt) echo "Your choice [1]: " ;;
+        ru:stt_invalid_choice) echo "Ошибка: выберите 1, 2, 3 или 4." ;;
+        en:stt_invalid_choice) echo "Error: choose 1, 2, 3, or 4." ;;
+        ru:stt_dryrun_parakeet) echo "Режим dry-run: был бы установлен Parakeet TDT 0.6B v3 INT8." ;;
+        en:stt_dryrun_parakeet) echo "Dry-run mode: Parakeet TDT 0.6B v3 INT8 would be installed." ;;
+        ru:stt_dryrun_gigastt) echo "Режим dry-run: был бы установлен GigaSTT с GigaAM v3 RNNT INT8." ;;
+        en:stt_dryrun_gigastt) echo "Dry-run mode: GigaSTT with GigaAM v3 RNNT INT8 would be installed." ;;
         ru:stt_dryrun_no) echo "Режим dry-run: шаг локального распознавания пропущен." ;;
         en:stt_dryrun_no) echo "Dry-run mode: local speech recognition step skipped." ;;
         ru:stt_skip) echo "Шаг локального распознавания пропущен по выбору пользователя." ;;
         en:stt_skip) echo "Local speech recognition step skipped by user choice." ;;
-        ru:stt_setup_start) echo "Настраиваю локальный контейнер распознавания речи..." ;;
-        en:stt_setup_start) echo "Setting up local speech recognition container..." ;;
+        ru:parakeet_setup_start) echo "Настраиваю контейнер Parakeet..." ;;
+        en:parakeet_setup_start) echo "Setting up the Parakeet container..." ;;
+        ru:gigastt_setup_start) echo "Настраиваю контейнер GigaSTT..." ;;
+        en:gigastt_setup_start) echo "Setting up the GigaSTT container..." ;;
         ru:stt_repo_missing) echo "Локальный каталог контейнера не найден, клонирую репозиторий..." ;;
         en:stt_repo_missing) echo "Local container directory not found, cloning repository..." ;;
         ru:stt_repo_clone) echo "Клонирую $2 в $3" ;;
@@ -39,18 +55,28 @@ msg() {
         en:docker_missing) echo "Error: Docker is not installed. Install Docker and rerun." ;;
         ru:git_missing) echo "Ошибка: Git не найден. Установите Git и повторите запуск." ;;
         en:git_missing) echo "Error: Git is not installed. Install Git and rerun." ;;
-        ru:stt_starting) echo "Запускаю контейнер (docker compose up -d)..." ;;
-        en:stt_starting) echo "Starting container (docker compose up -d)..." ;;
+        ru:parakeet_starting) echo "Собираю и запускаю CPU-контейнер Parakeet..." ;;
+        en:parakeet_starting) echo "Building and starting the Parakeet CPU container..." ;;
+        ru:parakeet_name_conflict) echo "Ошибка: контейнер '$2' уже существует, но использует другой image: $3" ;;
+        en:parakeet_name_conflict) echo "Error: container '$2' already exists but uses a different image: $3" ;;
+        ru:gigastt_starting) echo "Запускаю официальный CPU image GigaSTT..." ;;
+        en:gigastt_starting) echo "Starting the official GigaSTT CPU image..." ;;
+        ru:gigastt_name_conflict) echo "Ошибка: контейнер '$2' уже существует, но использует другой image: $3" ;;
+        en:gigastt_name_conflict) echo "Error: container '$2' already exists but uses a different image: $3" ;;
         ru:stt_need_sudo) echo "Для Docker требуются повышенные права. Запустить через sudo? [Y/n]: " ;;
         en:stt_need_sudo) echo "Docker needs elevated privileges. Run via sudo? [Y/n]: " ;;
         ru:stt_sudo_start) echo "Запускаю контейнер через sudo..." ;;
         en:stt_sudo_start) echo "Starting container via sudo..." ;;
-        ru:stt_failed) echo "Ошибка: не удалось запустить контейнер Parakeet." ;;
-        en:stt_failed) echo "Error: failed to start Parakeet container." ;;
+        ru:parakeet_failed) echo "Ошибка: не удалось запустить контейнер Parakeet." ;;
+        en:parakeet_failed) echo "Error: failed to start Parakeet container." ;;
+        ru:gigastt_failed) echo "Ошибка: не удалось запустить контейнер GigaSTT." ;;
+        en:gigastt_failed) echo "Error: failed to start GigaSTT container." ;;
         ru:stt_ready) echo "Локальное распознавание готово." ;;
         en:stt_ready) echo "Local speech recognition is ready." ;;
-        ru:stt_endpoint) echo "OpenAI Base URL для настроек: http://127.0.0.1:5092/v1" ;;
-        en:stt_endpoint) echo "OpenAI Base URL for settings: http://127.0.0.1:5092/v1" ;;
+        ru:parakeet_endpoint) echo "Parakeet: Base URL http://127.0.0.1:5092/v1, модель parakeet-tdt-0.6b-v3" ;;
+        en:parakeet_endpoint) echo "Parakeet: Base URL http://127.0.0.1:5092/v1, model parakeet-tdt-0.6b-v3" ;;
+        ru:gigastt_endpoint) echo "GigaSTT: Base URL http://127.0.0.1:$2/v1, модель gigaam-v3-rnnt" ;;
+        en:gigastt_endpoint) echo "GigaSTT: Base URL http://127.0.0.1:$2/v1, model gigaam-v3-rnnt" ;;
         ru:unknown_option) echo "Неизвестная опция: $2" ;;
         en:unknown_option) echo "Unknown option: $2" ;;
         ru:usage) echo "Использование: $0 [--dry-run|--check]" ;;
@@ -140,13 +166,16 @@ msg() {
     esac
 }
 
-setup_local_stt() {
+setup_parakeet() {
     local stt_repo_url="https://github.com/groxaxo/parakeet-tdt-0.6b-v3-fastapi-openai"
     local stt_base_dir="${HOME:-$(getent passwd "$USER" | cut -d: -f6)}/docker"
     local stt_dir="$stt_base_dir/parakeet-tdt"
-    local compose_cmd=()
+    local parakeet_image="parakeet-tdt:cpu"
+    local parakeet_container="parakeet-tdt"
+    local docker_cmd=(docker)
+    local expected_binding="127.0.0.1:5092"
 
-    msg stt_setup_start
+    msg parakeet_setup_start
     msg stt_repo_dir "$stt_dir"
 
     if [ ! -d "$stt_dir" ]; then
@@ -168,38 +197,140 @@ setup_local_stt() {
         exit 1
     fi
 
-    if docker compose version >/dev/null 2>&1; then
-        compose_cmd=(docker compose)
-    elif command -v docker-compose >/dev/null 2>&1; then
-        compose_cmd=(docker-compose)
-    else
+    if ! docker info >/dev/null 2>&1; then
+        read -rp "$(msg stt_need_sudo)" stt_sudo_yn
+        stt_sudo_yn=${stt_sudo_yn:-y}
+        if [[ ! "$stt_sudo_yn" =~ ^[YyДд]$ ]]; then
+            msg parakeet_failed
+            exit 1
+        fi
+        sudo -v
+        docker_cmd=(sudo docker)
+    fi
+
+    mkdir -p "$stt_dir/models"
+    msg parakeet_starting
+    if ! "${docker_cmd[@]}" build -f "$stt_dir/Dockerfile.cpu" -t "$parakeet_image" "$stt_dir"; then
+        msg parakeet_failed
+        exit 1
+    fi
+
+    if "${docker_cmd[@]}" container inspect "$parakeet_container" >/dev/null 2>&1; then
+        local existing_image
+        local existing_binding
+        existing_image=$("${docker_cmd[@]}" container inspect --format '{{.Config.Image}}' "$parakeet_container")
+        if [ "$existing_image" != "$parakeet_image" ]; then
+            msg parakeet_name_conflict "$parakeet_container" "$existing_image"
+            exit 1
+        fi
+        existing_binding=$("${docker_cmd[@]}" port "$parakeet_container" 5092/tcp 2>/dev/null | head -n 1)
+        if [ "$existing_binding" != "$expected_binding" ]; then
+            if ! "${docker_cmd[@]}" rm -f "$parakeet_container" >/dev/null; then
+                msg parakeet_failed
+                exit 1
+            fi
+        else
+            if ! "${docker_cmd[@]}" start "$parakeet_container" >/dev/null; then
+                msg parakeet_failed
+                exit 1
+            fi
+        fi
+    fi
+
+    if ! "${docker_cmd[@]}" container inspect "$parakeet_container" >/dev/null 2>&1; then
+        if ! "${docker_cmd[@]}" run -d \
+            --name "$parakeet_container" \
+            --restart unless-stopped \
+            --label io.typr.stt=parakeet \
+            -e PARAKEET_USE_GPU=false \
+            -e PARAKEET_DEFAULT_MODEL=parakeet-tdt-0.6b-v3 \
+            -e PARAKEET_BATCHED=0 \
+            -p 127.0.0.1:5092:5092 \
+            -v "$stt_dir/models:/app/models" \
+            "$parakeet_image" >/dev/null; then
+            msg parakeet_failed
+            exit 1
+        fi
+    fi
+
+    if [ "$("${docker_cmd[@]}" port "$parakeet_container" 5092/tcp 2>/dev/null | head -n 1)" != "$expected_binding" ]; then
+        msg parakeet_failed
+        exit 1
+    fi
+
+    msg stt_ready
+    msg parakeet_endpoint
+}
+
+setup_gigastt() {
+    local gigastt_image="ghcr.io/ekhodzitsky/gigastt:latest"
+    local gigastt_container="gigastt"
+    local gigastt_volume="gigastt-models"
+    local docker_cmd=(docker)
+    local expected_binding="127.0.0.1:9876"
+
+    msg gigastt_setup_start
+    if ! command -v docker >/dev/null 2>&1; then
         msg docker_missing
         exit 1
     fi
 
-    msg stt_starting
-    if (cd "$stt_dir" && "${compose_cmd[@]}" up -d); then
-        msg stt_ready
-        msg stt_endpoint
-        return
+    if ! docker info >/dev/null 2>&1; then
+        read -rp "$(msg stt_need_sudo)" stt_sudo_yn
+        stt_sudo_yn=${stt_sudo_yn:-y}
+        if [[ ! "$stt_sudo_yn" =~ ^[YyДд]$ ]]; then
+            msg gigastt_failed
+            exit 1
+        fi
+        sudo -v
+        docker_cmd=(sudo docker)
     fi
 
-    read -rp "$(msg stt_need_sudo)" stt_sudo_yn
-    stt_sudo_yn=${stt_sudo_yn:-y}
-    if [[ ! "$stt_sudo_yn" =~ ^[Yy]$ ]]; then
-        msg stt_failed
+    if "${docker_cmd[@]}" container inspect "$gigastt_container" >/dev/null 2>&1; then
+        local existing_image
+        local existing_binding
+        existing_image=$("${docker_cmd[@]}" container inspect --format '{{.Config.Image}}' "$gigastt_container")
+        if [ "$existing_image" != "$gigastt_image" ]; then
+            msg gigastt_name_conflict "$gigastt_container" "$existing_image"
+            exit 1
+        fi
+        existing_binding=$("${docker_cmd[@]}" port "$gigastt_container" 9876/tcp 2>/dev/null | head -n 1)
+        if [ "$existing_binding" != "$expected_binding" ]; then
+            if ! "${docker_cmd[@]}" rm -f "$gigastt_container" >/dev/null; then
+                msg gigastt_failed
+                exit 1
+            fi
+        else
+            msg gigastt_starting
+            if ! "${docker_cmd[@]}" start "$gigastt_container" >/dev/null; then
+                msg gigastt_failed
+                exit 1
+            fi
+        fi
+    fi
+
+    if ! "${docker_cmd[@]}" container inspect "$gigastt_container" >/dev/null 2>&1; then
+        msg gigastt_starting
+        "${docker_cmd[@]}" volume create "$gigastt_volume" >/dev/null
+        if ! "${docker_cmd[@]}" run -d \
+            --name "$gigastt_container" \
+            --restart unless-stopped \
+            --label io.typr.stt=gigastt \
+            -p 127.0.0.1:9876:9876 \
+            -v "$gigastt_volume:/home/gigastt/.gigastt/models" \
+            "$gigastt_image" >/dev/null; then
+            msg gigastt_failed
+            exit 1
+        fi
+    fi
+
+    if [ "$("${docker_cmd[@]}" port "$gigastt_container" 9876/tcp 2>/dev/null | head -n 1)" != "$expected_binding" ]; then
+        msg gigastt_failed
         exit 1
     fi
 
-    msg stt_sudo_start
-    sudo -v
-    if (cd "$stt_dir" && sudo "${compose_cmd[@]}" up -d); then
-        msg stt_ready
-        msg stt_endpoint
-    else
-        msg stt_failed
-        exit 1
-    fi
+    msg stt_ready
+    msg gigastt_endpoint "9876"
 }
 
 DRY_RUN=false
@@ -221,21 +352,49 @@ msg title
 echo "========================================="
 echo
 
-read -rp "$(msg stt_prompt)" want_local_stt
-want_local_stt=${want_local_stt:-n}
-if [[ "$want_local_stt" =~ ^[Yy]$ ]]; then
-    if [ "$DRY_RUN" = true ]; then
-        msg stt_dryrun_yes
-    else
-        setup_local_stt
-    fi
-else
-    if [ "$DRY_RUN" = true ]; then
-        msg stt_dryrun_no
-    else
-        msg stt_skip
-    fi
-fi
+msg stt_intro
+msg stt_parakeet_desc
+msg stt_gigastt_desc
+msg stt_both_desc
+msg stt_none_desc
+read -rp "$(msg stt_choice_prompt)" stt_choice
+stt_choice=${stt_choice:-1}
+case "$stt_choice" in
+    1)
+        if [ "$DRY_RUN" = true ]; then
+            msg stt_dryrun_parakeet
+        else
+            setup_parakeet
+        fi
+        ;;
+    2)
+        if [ "$DRY_RUN" = true ]; then
+            msg stt_dryrun_gigastt
+        else
+            setup_gigastt
+        fi
+        ;;
+    3)
+        if [ "$DRY_RUN" = true ]; then
+            msg stt_dryrun_parakeet
+            msg stt_dryrun_gigastt
+        else
+            setup_parakeet
+            setup_gigastt
+        fi
+        ;;
+    4)
+        if [ "$DRY_RUN" = true ]; then
+            msg stt_dryrun_no
+        else
+            msg stt_skip
+        fi
+        ;;
+    *)
+        msg stt_invalid_choice
+        exit 1
+        ;;
+esac
 echo
 
 # 1. Detect Operating System
