@@ -91,7 +91,7 @@ class WhisperTranscriber(QObject):
         self,
         api_key: str,
         api_base_url: str = "http://127.0.0.1:5092/v1",
-        model: str = "parakeet-tdt-0.6b-v3-onnx/",
+        model: str = "parakeet-tdt-0.6b-v3",
         parent: QObject | None = None,
     ):
         super().__init__(parent)

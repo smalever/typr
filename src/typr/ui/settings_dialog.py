@@ -131,6 +131,7 @@ class SettingsDialog(QDialog):
 
     # Common models for the default local endpoint and OpenAI-compatible APIs
     DEFAULT_MODELS = [
+        ("parakeet-tdt-0.6b-v3", "Parakeet TDT 0.6B v3 INT8"),
         ("parakeet-tdt-0.6b-v3-onnx/", "Parakeet TDT 0.6B v3 ONNX"),
         ("whisper-1", "Whisper 1 (Standard)"),
         ("gpt-4o-transcribe", "GPT-4o Transcribe (Better accuracy)"),

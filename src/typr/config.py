@@ -32,7 +32,7 @@ class AudioConfig:
 class TranscriptionConfig:
     """Transcription settings."""
 
-    model: str = "parakeet-tdt-0.6b-v3-onnx/"
+    model: str = "parakeet-tdt-0.6b-v3"
     language: str | None = None  # None = auto-detect
     mode: str = "push_to_talk"  # push_to_talk, live
     prompt: str = ""  # Context prompt for better accuracy

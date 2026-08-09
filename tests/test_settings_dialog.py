@@ -23,7 +23,7 @@ def test_app_config_uses_local_parakeet_defaults() -> None:
     config = AppConfig()
 
     assert config.api_base_url == "http://127.0.0.1:5092/v1"
-    assert config.transcription.model == "parakeet-tdt-0.6b-v3-onnx/"
+    assert config.transcription.model == "parakeet-tdt-0.6b-v3"
     assert config.hotkeys.push_to_talk == "Ctrl+Alt+Z"
     assert settings_dialog.SettingsDialog.DEFAULT_MODELS[0][0] == config.transcription.model
 

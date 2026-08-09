@@ -8,7 +8,7 @@
 <p align="center">
   <a href="https://opensource.org/licenses/MIT"><img alt="Лицензия MIT" src="https://img.shields.io/badge/License-MIT-blue.svg"></a>
   <a href="https://www.python.org/downloads/"><img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10+-blue.svg"></a>
-  <a href="https://github.com/smalever/typr/releases/latest"><img alt="Последняя версия" src="https://img.shields.io/badge/version-0.2.3-brightgreen.svg"></a>
+  <a href="https://github.com/smalever/typr/releases/latest"><img alt="Последняя версия" src="https://img.shields.io/badge/version-0.2.4-brightgreen.svg"></a>
 </p>
 
 <p align="center">
@@ -116,13 +116,15 @@ cd typr
 - если каталога нет, автоматически клонирует репозиторий  
   `https://github.com/groxaxo/parakeet-tdt-0.6b-v3-fastapi-openai`;
 - запускает контейнер через `docker compose up -d` (или `docker-compose up -d`);
+- предзагружает модель `parakeet-tdt-0.6b-v3` при старте контейнера и держит её
+  в памяти, пока пользователь не выберет другую модель;
 - при необходимости запрашивает запуск через `sudo`.
 
 После успешного запуска выводится endpoint для настроек Typr:
 `http://127.0.0.1:5092/v1`
 
 Для новой конфигурации Typr этот локальный endpoint, модель
-`parakeet-tdt-0.6b-v3-onnx/` и горячая клавиша `Ctrl+Alt+Z` уже выбраны по умолчанию.
+`parakeet-tdt-0.6b-v3` и горячая клавиша `Ctrl+Alt+Z` уже выбраны по умолчанию.
 
 > [!NOTE]
 > После первой установки может потребоваться выйти из системы (Log Out) и зайти снова, чтобы применились права группы `input`.
@@ -147,7 +149,7 @@ groups | grep input
 1. **Запуск** — запустите Typr из меню ваших приложений или через терминал с помощью команды `./.venv/bin/typr` (находясь в папке проекта).
 2. **Настройка** — нажмите правой кнопкой мыши по иконке в трее → **Settings**.
    - По умолчанию выбран `Base URL`: `http://127.0.0.1:5092/v1`; API-ключ для локального Parakeet не требуется.
-   - По умолчанию выбрана модель `parakeet-tdt-0.6b-v3-onnx/`.
+   - По умолчанию выбрана модель `parakeet-tdt-0.6b-v3`.
    - Для другого сервера измените `Base URL`, при необходимости введите API-ключ, затем во вкладке **General** нажмите **Fetch** и выберите модель.
 3. **Запись** — **зажмите** сочетание клавиш `Ctrl+Alt+Z` (по умолчанию) и говорите.
 4. **Вставка** — **отпустите** клавиши. Текст распознается и вставится в текстовое поле, где стоял фокус.
@@ -164,7 +166,7 @@ groups | grep input
 {
   "api_base_url": "http://127.0.0.1:5092/v1",
   "transcription": {
-    "model": "parakeet-tdt-0.6b-v3-onnx/"
+    "model": "parakeet-tdt-0.6b-v3"
   },
   "hotkeys": {
     "push_to_talk": "Ctrl+Alt+Z"
