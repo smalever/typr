@@ -28,6 +28,15 @@ def test_app_config_uses_local_parakeet_defaults() -> None:
     assert settings_dialog.SettingsDialog.DEFAULT_MODELS[0][0] == config.transcription.model
 
 
+def test_gigastt_settings_disable_ignored_options() -> None:
+    assert settings_dialog._is_gigastt_settings(
+        "http://127.0.0.1:9876/v1", "gigaam-v3-rnnt"
+    )
+    assert not settings_dialog._is_gigastt_settings(
+        "http://127.0.0.1:5092/v1", "parakeet-tdt-0.6b-v3"
+    )
+
+
 def test_request_models_falls_back_to_openapi_schema(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path in ("/v1/models", "/v1/audio/models"):

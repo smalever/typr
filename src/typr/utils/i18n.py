@@ -105,6 +105,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "settings.general.context_placeholder": (
             "Optional context to improve accuracy (e.g., technical terms, names)"
         ),
+        "settings.general.gigastt_ignored": (
+            "GigaSTT uses its fixed GigaAM head; Language and Context are ignored."
+        ),
         "settings.general.ui": "User Interface",
         "settings.general.show_notifications": "Show notifications",
         "settings.general.notification_duration": "Notification duration:",
@@ -146,8 +149,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "History is stored locally at <code>~/.local/share/typr/history.json</code>. "
             "Open the History window from the tray icon to browse and copy past transcriptions."
         ),
-        "settings.about.desc": "Speech-to-text for Linux using OpenAI and Parakeet-compatible APIs",
-        "settings.about.version": "Version 0.3.0",
+        "settings.about.desc": "Speech-to-text for Linux using OpenAI-compatible local APIs",
+        "settings.about.version": "Version 0.3.1",
         # Test Connection Outputs
         "settings.api.test.checking": "Checking connection...",
         "settings.api.test.valid": "Settings are valid.",
@@ -247,6 +250,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "settings.general.context_placeholder": (
             "Необязательный контекст для улучшения точности (например, термины, имена)"
         ),
+        "settings.general.gigastt_ignored": (
+            "GigaSTT использует фиксированную GigaAM: Язык и Контекст игнорируются."
+        ),
         "settings.general.ui": "Интерфейс пользователя",
         "settings.general.show_notifications": "Показывать уведомления",
         "settings.general.notification_duration": "Длительность уведомлений:",
@@ -288,10 +294,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "История хранится локально в файле <code>~/.local/share/typr/history.json</code>. "
             "Откройте окно истории из трея, чтобы просмотреть и скопировать прошлые записи."
         ),
-        "settings.about.desc": (
-            "Голосовой ввод для Linux с использованием OpenAI и Parakeet-совместимых API"
-        ),
-        "settings.about.version": "Версия 0.3.0",
+        "settings.about.desc": "Голосовой ввод для Linux через локальные OpenAI-совместимые API",
+        "settings.about.version": "Версия 0.3.1",
         # Test Connection Outputs
         "settings.api.test.checking": "Проверка соединения...",
         "settings.api.test.valid": "Настройки корректны.",

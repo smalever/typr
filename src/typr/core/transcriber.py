@@ -6,6 +6,39 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal
 from typr.utils.logger import logger
 
 
+def _is_local_gigastt(api_base_url: str, model: str) -> bool:
+    """Return whether settings target the installer-managed GigaSTT server."""
+    return model == "gigaam-v3-rnnt" or api_base_url.rstrip("/") == (
+        "http://127.0.0.1:9876/v1"
+    )
+
+
+def _request_timeout(api_base_url: str, model: str) -> httpx.Timeout:
+    """Use a longer inference window for the local CPU GigaSTT backend."""
+    read_timeout = 120.0 if _is_local_gigastt(api_base_url, model) else 30.0
+    return httpx.Timeout(connect=10.0, read=read_timeout, write=30.0, pool=10.0)
+
+
+def _api_error_message(response: httpx.Response, fallback: str) -> str:
+    """Extract OpenAI or GigaSTT error text without assuming its JSON shape."""
+    try:
+        detail = response.json()
+    except ValueError:
+        return fallback
+
+    if not isinstance(detail, dict):
+        return fallback
+    error = detail.get("error")
+    if isinstance(error, dict):
+        message = error.get("message")
+        if isinstance(message, str) and message:
+            return message
+    if isinstance(error, str) and error:
+        code = detail.get("code")
+        return f"{error} ({code})" if isinstance(code, str) and code else error
+    return fallback
+
+
 class TranscriberWorker(QThread):
     """Worker thread for async API calls."""
 
@@ -32,7 +65,7 @@ class TranscriberWorker(QThread):
     def run(self) -> None:
         """Execute the API request."""
         try:
-            with httpx.Client(timeout=15.0) as client:
+            with httpx.Client(timeout=_request_timeout(self.api_base_url, self.model)) as client:
                 files = {"file": ("audio.wav", self.audio_data, "audio/wav")}
                 data = {"model": self.model}
 
@@ -59,12 +92,9 @@ class TranscriberWorker(QThread):
 
         except httpx.HTTPStatusError as e:
             error_msg = f"API error: {e.response.status_code}"
-            try:
-                error_detail = e.response.json()
-                if "error" in error_detail:
-                    error_msg = f"API error: {error_detail['error'].get('message', str(e))}"
-            except Exception:
-                pass
+            detail = _api_error_message(e.response, str(e))
+            if detail != str(e):
+                error_msg = f"API error: {detail}"
             logger.error(error_msg)
             self.error.emit(error_msg)
 

@@ -129,6 +129,13 @@ def _probe_api(base_url: str, api_key: str) -> bool:
         return True
 
 
+def _is_gigastt_settings(base_url: str, model: str) -> bool:
+    """Identify GigaSTT settings whose OpenAI prompt/language fields are ignored."""
+    return model == "gigaam-v3-rnnt" or base_url.rstrip("/") == (
+        "http://127.0.0.1:9876/v1"
+    )
+
+
 class SettingsDialog(QDialog):
     """Settings dialog with tabs for configuration."""
 
@@ -137,6 +144,7 @@ class SettingsDialog(QDialog):
     # Common models for the default local endpoint and OpenAI-compatible APIs
     DEFAULT_MODELS = [
         ("parakeet-tdt-0.6b-v3", "Parakeet TDT 0.6B v3 INT8"),
+        ("gigaam-v3-rnnt", "GigaSTT / GigaAM v3 RNNT INT8"),
         ("parakeet-tdt-0.6b-v3-onnx/", "Parakeet TDT 0.6B v3 ONNX"),
         ("whisper-1", "Whisper 1 (Standard)"),
         ("gpt-4o-transcribe", "GPT-4o Transcribe (Better accuracy)"),
@@ -242,6 +250,15 @@ class SettingsDialog(QDialog):
             )
         )
         trans_layout.addRow(tr("settings.general.context", "Context:"), self._prompt_edit)
+
+        self._gigastt_options_note = QLabel(
+            tr(
+                "settings.general.gigastt_ignored",
+                "GigaSTT uses its fixed GigaAM head; Language and Context are ignored.",
+            )
+        )
+        self._gigastt_options_note.setWordWrap(True)
+        trans_layout.addRow(self._gigastt_options_note)
 
         layout.addWidget(trans_group)
 
@@ -519,6 +536,17 @@ class SettingsDialog(QDialog):
         # History
         self._history_enabled_check.setChecked(self.config.history.enabled)
         self._history_max_spin.setValue(self.config.history.max_entries)
+        self._api_base_edit.textChanged.connect(self._update_transcription_option_state)
+        self._model_combo.currentTextChanged.connect(self._update_transcription_option_state)
+        self._update_transcription_option_state()
+
+    def _update_transcription_option_state(self) -> None:
+        """Avoid implying that GigaSTT uses OpenAI language or prompt hints."""
+        model = self._model_combo.currentData() or self._model_combo.currentText()
+        is_gigastt = _is_gigastt_settings(self._api_base_edit.text(), str(model))
+        self._language_combo.setEnabled(not is_gigastt)
+        self._prompt_edit.setEnabled(not is_gigastt)
+        self._gigastt_options_note.setVisible(is_gigastt)
 
     def _save_settings(self) -> None:
         """Save settings from UI to config."""

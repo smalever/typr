@@ -43,6 +43,9 @@ HotkeyManager / TrayIcon
 9. UI state является проекцией `AppState`; tray actions не создают параллельный recording/transcription pipeline.
 10. Cleanup останавливает clipboard restore timer и освобождает audio stream, input devices,
     virtual keyboard и текущий clipboard helper process, включая helper восстановленного clipboard.
+11. HTTP transcription использует отдельные connect/read timeouts; локальному GigaSTT
+    предоставляется более длинное CPU inference window, а ошибки принимаются как в OpenAI
+    object-формате, так и в строковом GigaSTT envelope.
 
 ## Данные И Системные Границы
 

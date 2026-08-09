@@ -61,6 +61,14 @@ msg() {
         en:parakeet_name_conflict) echo "Error: container '$2' already exists but uses a different image: $3" ;;
         ru:gigastt_starting) echo "Запускаю официальный CPU image GigaSTT..." ;;
         en:gigastt_starting) echo "Starting the official GigaSTT CPU image..." ;;
+        ru:gigastt_pulling) echo "Загружаю актуальный Docker image GigaSTT..." ;;
+        en:gigastt_pulling) echo "Pulling the current GigaSTT Docker image..." ;;
+        ru:gigastt_waiting) echo "Ожидаю готовности GigaSTT (это может занять несколько минут при первой загрузке модели)..." ;;
+        en:gigastt_waiting) echo "Waiting for GigaSTT readiness (the first model download may take several minutes)..." ;;
+        ru:gigastt_not_ready) echo "Ошибка: GigaSTT не стал готов за $2 секунд. Последние строки логов:" ;;
+        en:gigastt_not_ready) echo "Error: GigaSTT did not become ready within $2 seconds. Recent logs:" ;;
+        ru:gigastt_configured) echo "Создана новая конфигурация Typr для GigaSTT: http://127.0.0.1:9876/v1, gigaam-v3-rnnt." ;;
+        en:gigastt_configured) echo "Created a new Typr configuration for GigaSTT: http://127.0.0.1:9876/v1, gigaam-v3-rnnt." ;;
         ru:gigastt_name_conflict) echo "Ошибка: контейнер '$2' уже существует, но использует другой image: $3" ;;
         en:gigastt_name_conflict) echo "Error: container '$2' already exists but uses a different image: $3" ;;
         ru:stt_need_sudo) echo "Для Docker требуются повышенные права. Запустить через sudo? [Y/n]: " ;;
@@ -268,6 +276,8 @@ setup_gigastt() {
     local gigastt_volume="gigastt-models"
     local docker_cmd=(docker)
     local expected_binding="127.0.0.1:9876"
+    local expected_cmd='["serve","--port","9876","--host","0.0.0.0","--bind-all","--pool-size","1"]'
+    local readiness_timeout=600
 
     msg gigastt_setup_start
     if ! command -v docker >/dev/null 2>&1; then
@@ -286,16 +296,36 @@ setup_gigastt() {
         docker_cmd=(sudo docker)
     fi
 
+    msg gigastt_pulling
+    if ! "${docker_cmd[@]}" pull "$gigastt_image"; then
+        msg gigastt_failed
+        exit 1
+    fi
+
+    local latest_image_id
+    latest_image_id=$("${docker_cmd[@]}" image inspect --format '{{.Id}}' "$gigastt_image")
+
     if "${docker_cmd[@]}" container inspect "$gigastt_container" >/dev/null 2>&1; then
         local existing_image
+        local existing_label
         local existing_binding
+        local existing_image_id
+        local existing_cmd
+        local existing_variant
         existing_image=$("${docker_cmd[@]}" container inspect --format '{{.Config.Image}}' "$gigastt_container")
-        if [ "$existing_image" != "$gigastt_image" ]; then
+        existing_label=$("${docker_cmd[@]}" container inspect --format '{{index .Config.Labels "io.typr.stt"}}' "$gigastt_container")
+        if [ "$existing_label" != "gigastt" ]; then
             msg gigastt_name_conflict "$gigastt_container" "$existing_image"
             exit 1
         fi
+        existing_image_id=$("${docker_cmd[@]}" container inspect --format '{{.Image}}' "$gigastt_container")
         existing_binding=$("${docker_cmd[@]}" port "$gigastt_container" 9876/tcp 2>/dev/null | head -n 1)
-        if [ "$existing_binding" != "$expected_binding" ]; then
+        existing_cmd=$("${docker_cmd[@]}" container inspect --format '{{json .Config.Cmd}}' "$gigastt_container")
+        existing_variant=$("${docker_cmd[@]}" container inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$gigastt_container" | grep -F 'GIGASTT_MODEL_VARIANT=rnnt' || true)
+        if [ "$existing_binding" != "$expected_binding" ] \
+            || [ "$existing_image_id" != "$latest_image_id" ] \
+            || [ "$existing_cmd" != "$expected_cmd" ] \
+            || [ -z "$existing_variant" ]; then
             if ! "${docker_cmd[@]}" rm -f "$gigastt_container" >/dev/null; then
                 msg gigastt_failed
                 exit 1
@@ -316,9 +346,11 @@ setup_gigastt() {
             --name "$gigastt_container" \
             --restart unless-stopped \
             --label io.typr.stt=gigastt \
+            -e GIGASTT_MODEL_VARIANT=rnnt \
             -p 127.0.0.1:9876:9876 \
             -v "$gigastt_volume:/home/gigastt/.gigastt/models" \
-            "$gigastt_image" >/dev/null; then
+            "$gigastt_image" \
+            serve --port 9876 --host 0.0.0.0 --bind-all --pool-size 1 >/dev/null; then
             msg gigastt_failed
             exit 1
         fi
@@ -329,8 +361,42 @@ setup_gigastt() {
         exit 1
     fi
 
-    msg stt_ready
-    msg gigastt_endpoint "9876"
+    msg gigastt_waiting
+    local waited=0
+    while [ "$waited" -lt "$readiness_timeout" ]; do
+        if "${docker_cmd[@]}" exec "$gigastt_container" \
+            curl -fsS http://localhost:9876/ready >/dev/null 2>&1; then
+            msg stt_ready
+            msg gigastt_endpoint "9876"
+            return
+        fi
+        if [ "$("${docker_cmd[@]}" container inspect --format '{{.State.Running}}' "$gigastt_container")" != "true" ]; then
+            break
+        fi
+        sleep 2
+        waited=$((waited + 2))
+    done
+
+    msg gigastt_not_ready "$readiness_timeout"
+    "${docker_cmd[@]}" logs --tail 50 "$gigastt_container" >&2 || true
+    exit 1
+}
+
+configure_new_gigastt_config() {
+    local config_file="${HOME:-$(getent passwd "$USER" | cut -d: -f6)}/.config/typr/config.json"
+    if [ "$stt_choice" != "2" ] || [ -e "$config_file" ]; then
+        return
+    fi
+
+    "$VENV_DIR/bin/python" -c '
+from typr.config import AppConfig
+
+config = AppConfig()
+config.api_base_url = "http://127.0.0.1:9876/v1"
+config.transcription.model = "gigaam-v3-rnnt"
+config.save()
+'
+    msg gigastt_configured
 }
 
 DRY_RUN=false
@@ -653,6 +719,7 @@ fi
 msg install_py "$VENV_DIR"
 "$VENV_PIP" install --upgrade pip
 "$VENV_PIP" install -e "$SCRIPT_DIR[dev]"
+configure_new_gigastt_config
 
 echo
 
