@@ -150,7 +150,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "Open the History window from the tray icon to browse and copy past transcriptions."
         ),
         "settings.about.desc": "Speech-to-text for Linux using OpenAI-compatible local APIs",
-        "settings.about.version": "Version 0.3.1",
+        "settings.about.version": "Version 0.3.2",
         # Test Connection Outputs
         "settings.api.test.checking": "Checking connection...",
         "settings.api.test.valid": "Settings are valid.",
@@ -295,7 +295,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "Откройте окно истории из трея, чтобы просмотреть и скопировать прошлые записи."
         ),
         "settings.about.desc": "Голосовой ввод для Linux через локальные OpenAI-совместимые API",
-        "settings.about.version": "Версия 0.3.1",
+        "settings.about.version": "Версия 0.3.2",
         # Test Connection Outputs
         "settings.api.test.checking": "Проверка соединения...",
         "settings.api.test.valid": "Настройки корректны.",

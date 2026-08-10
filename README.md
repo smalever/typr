@@ -8,7 +8,7 @@
 <p align="center">
   <a href="https://opensource.org/licenses/MIT"><img alt="Лицензия MIT" src="https://img.shields.io/badge/License-MIT-blue.svg"></a>
   <a href="https://www.python.org/downloads/"><img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10+-blue.svg"></a>
-  <a href="https://github.com/smalever/typr/releases/latest"><img alt="Последняя версия" src="https://img.shields.io/badge/version-0.3.1-brightgreen.svg"></a>
+  <a href="https://github.com/smalever/typr/releases/latest"><img alt="Последняя версия" src="https://img.shields.io/badge/version-0.3.2-brightgreen.svg"></a>
 </p>
 
 <p align="center">

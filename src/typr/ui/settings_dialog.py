@@ -300,7 +300,6 @@ class SettingsDialog(QDialog):
         self._api_key_edit = QLineEdit()
         self._api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self._api_key_edit.setPlaceholderText(tr("settings.api.key_placeholder", "sk-..."))
-        api_layout.addRow(tr("settings.api.key", "API Key:"), self._api_key_edit)
 
         # Show/hide API key button
         key_layout = QHBoxLayout()
