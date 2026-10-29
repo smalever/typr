@@ -26,34 +26,37 @@
 
 ## Проверки
 
-Полный набор Python tests:
+### Матрица Проверок
+
+Канонические правила выбора проверок:
+
+| Тип изменений | Проверки | Когда запускать |
+| --- | --- | --- |
+| Локальные изменения кода | Targeted tests + `ruff check <файлы>` | Во время работы над правками. |
+| Широкие / cross-component изменения | Полный `pytest` | Один раз после завершения интеграции; повтор при исправлениях, влияющих на результат. |
+| Workflow / docs-only изменения | Targeted tests (например, `tests/test_project_skills.py`) | По завершении правок в docs/skills. |
+| Диагностика кодовой базы | `ruff check .` и `mypy src/typr` | Запускаются для оценки repo-wide состояния; существующие findings вне diff фиксируются отдельно и не смешиваются с целевой правкой. |
+| Packaging / entrypoints | `python -m build` (при отсутствии toolchain фиксируется как непроверенное/blocker при обязательной проверке) | При изменении `pyproject.toml`, packaging или точек входа. |
+| Shell scripts / installer | `bash -n install.sh uninstall.sh` | При изменении shell-скриптов; `./install.sh --dry-run` запускается только если текущее окружение подходит для preflight. |
+
+Отчет о проверках обязан связывать результаты с актуальным diff; запрещается выдавать старые результаты предыдущих запусков за проверку новых правок.
+
+Команды проверок (запускаются через проектный `.venv`, если он существует):
 
 ```bash
+# Python tests
 ./.venv/bin/pytest
-```
 
-Static checks:
-
-```bash
+# Static checks
 ./.venv/bin/ruff check .
 ./.venv/bin/mypy src/typr
-```
 
-Эти команды проверяют весь существующий Python-код. При локальном изменении сначала проверь затронутые файлы; repository-wide findings вне текущего diff фиксируй отдельно и не исправляй несвязанным массовым refactor.
-
-Shell syntax:
-
-```bash
+# Shell syntax
 bash -n install.sh uninstall.sh
-```
 
-Installer preflight без изменений системы:
-
-```bash
+# Installer preflight без изменений системы (интерактивен для выбора локального STT и зависит от текущего Linux desktop environment, не универсальный CI check):
 ./install.sh --dry-run
 ```
-
-`--dry-run` остается интерактивным для выбора локального STT и зависит от текущего Linux desktop environment. Не запускай его как универсальный CI check.
 
 ## Стратегия Tests
 
@@ -80,11 +83,4 @@ Installer preflight без изменений системы:
 
 ## Версионирование
 
-Версия приложения следует SemVer и повышается непосредственно перед каждым commit после завершения review:
-
-```bash
-python3 scripts/bump_version.py patch  # либо minor / major
-python3 scripts/bump_version.py --check
-```
-
-`patch` используется для небольших совместимых исправлений и внутренних изменений, `minor` - для обратно совместимых функций и существенных улучшений, `major` - для несовместимых или глобальных изменений. При смешанном commit выбирается максимальный уровень. Скрипт синхронизирует package metadata, `__version__`, About-строки RU/EN и badge в `README.md`; bump включается в тот же commit, а не оформляется отдельно.
+Версия приложения следует SemVer. Выбор уровня, команды и обязательное повышение после review непосредственно перед staging описаны в `.kilo/skills/git-commit/SKILL.md`; изменение версии входит в тот же commit.

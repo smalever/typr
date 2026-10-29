@@ -21,13 +21,7 @@ description: Проектный контекст Typr для нетривиал�
 
 ## Архитектурные Границы
 
-- `TyprApp` координирует компоненты и состояния, но не реализует детали audio, network, input или persistence.
-- `AudioRecorder` владеет PyAudio stream и recording thread.
-- `WhisperTranscriber` выполняет HTTP I/O только в worker thread и возвращает результат через Qt signals.
-- `HotkeyManager` читает `evdev` devices в отдельном thread; обработчики не выполняют blocking I/O.
-- `TextInjector` захватывает clipboard непосредственно перед paste и восстанавливает его только если пользователь не изменил содержимое.
-- `AppConfig` терпимо читает неизвестные поля и не перезаписывает поврежденный config.
-- `HistoryManager` хранит только транскрипции и не должен получать API key или audio payload без отдельного решения.
+Границы компонентов и runtime-инварианты описаны в `docs/ARCHITECTURE.md`. `TyprApp` не реализует детали audio, network, input или persistence; `HotkeyManager` не выполняет blocking I/O в обработчиках. `AppConfig` терпимо читает неизвестные поля; `HistoryManager` хранит только транскрипции и не получает API key или audio payload без отдельного решения.
 
 ## Правила Изменений
 
@@ -37,18 +31,19 @@ description: Проектный контекст Typr для нетривиал�
 - Не блокируй main Qt thread сетевыми запросами, длительной audio/input обработкой или ожиданием subprocess.
 - Не добавляй альтернативный путь вставки, зависящий от текущей keyboard layout, если Unicode clipboard pipeline решает задачу.
 - Ошибка отдельного компонента должна возвращать приложение в управляемое состояние и не оставлять recording, worker, clipboard helper или input device без cleanup.
+- Наблюдаемость ошибок: не используй silent fallback и `except: pass`. Перехватывай конкретные ожидаемые исключения. Широкий перехват (`except Exception`) допустим только на границах runtime (Qt slots, top-level worker threads, CLI entrypoints) с обязательной диагностической записью без утечки secrets, переводом компонента в явное состояние ошибки или degraded mode и корректным cleanup. Это не должно приводить к крашу Qt UI и не отменяет tolerant loading настроек.
+- Источник знаний об API библиотек: установленная версия в окружении, локальные stubs/типизация или официальная документация строго соответствующей версии; не используй непроверенные сниппеты из сети.
 
 ### Конфигурация И Данные
 
 - Новую группу настроек оформляй dataclass и добавляй в `AppConfig.__post_init__()` и `_to_dict()`.
 - Сохраняй tolerant loading, atomic write, backup и mode `0600` для config с API key.
-- Изменения формата history должны сохранять безопасное чтение существующих записей либо сопровождаться явно обоснованной migration strategy.
+- Политика совместимости — в `AGENTS.md`; неподдерживаемый формат обрабатывай безопасно и явно, без скрытого сброса, удаления или повреждения пользовательских данных.
 
 ### UI И Локализация
 
 - UI остается компактным tray-first приложением; новые действия должны быть доступны без нарушения текущего push-to-talk workflow.
 - Пользовательские строки добавляй одновременно в английский и русский словари `src/typr/utils/i18n.py`.
-- Не выполняй network/audio проверки в UI thread, если операция может заметно задержать интерфейс.
 
 ### Установка
 
@@ -57,11 +52,7 @@ description: Проектный контекст Typr для нетривиал�
 
 ## Проверки Перед Завершением
 
-- Запусти релевантные tests; для широкого изменения - полный `pytest`.
-- Запусти `ruff check` для затронутых Python-файлов. Полный `ruff check .` и `mypy src/typr` используй как repository-wide диагностику: существующие findings вне текущего diff фиксируй отдельно и не смешивай с целевой правкой.
-- Для packaging или entrypoint changes выполни `python -m build` либо эквивалентную доступную проверку сборки.
-- Для installer changes выполни `bash -n install.sh uninstall.sh`; `--dry-run` запускай только когда он не требует нежелательного интерактивного или системного действия.
-- Проверь `git diff`, обязательные docs/tests, stale paths и отсутствие secrets/generated artifacts.
+Проверки выбирай по `docs/DEVELOPMENT.md`; перед завершением проверь diff, отсутствие secrets и артефактов в staged/working tree.
 
 ## Язык
 

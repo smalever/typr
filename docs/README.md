@@ -8,8 +8,8 @@
 
 - `../AGENTS.md` - обязательный workflow ИИ-агента и правила безопасной работы с проектом.
 - `../.kilo/skills/typr-codebase/SKILL.md` - проектная навигация и правила изменений.
-- `../.kilo/skills/subagent-coordination/SKILL.md` - процедура делегирования изолированных задач.
-- `../.kilo/skills/code-review/SKILL.md` - review незакоммиченных изменений с исправлениями.
+- `../.kilo/skills/subagent-coordination/SKILL.md` - процедура делегирования (delegation-first) задач субагентам.
+- `../.kilo/skills/code-review/SKILL.md` - независимое review незакоммиченных изменений и устранение дефектов.
 - `../.kilo/skills/git-commit/SKILL.md` - локальный commit после обязательного review.
 - `ARCHITECTURE.md` - runtime pipeline, компоненты, зависимости и инварианты.
 - `DEVELOPMENT.md` - локальное окружение, команды проверок и границы hardware-dependent validation.

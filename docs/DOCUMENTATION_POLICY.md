@@ -34,7 +34,7 @@
 | Python dependency, package entrypoint или build config | `pyproject.toml`, install/uninstall scripts и desktop entries при необходимости, build/import checks, `DEVELOPMENT.md` |
 | Версия приложения или commit workflow | `pyproject.toml`, `src/typr/__init__.py`, RU/EN About-строки, README badge, `scripts/bump_version.py`, contract tests, `DEVELOPMENT.md` |
 | Installer, uninstaller, desktop entry или system permission | scripts/resources, `bash -n`, безопасный preflight/manual validation, `README.md` |
-| Project skills или agent workflow | `.kilo/skills/`, `AGENTS.md` при глобальном правиле, `docs/README.md` и эта policy при изменении связок |
+| Project skills или agent workflow | `.kilo/skills/`, `AGENTS.md` при глобальном правиле, связка delegation/review/checks в `docs/DEVELOPMENT.md` и `docs/README.md` |
 
 ## Границы Обновления
 
