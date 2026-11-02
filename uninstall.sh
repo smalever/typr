@@ -53,8 +53,8 @@ msg() {
         en:stt_data_partial) echo "Some STT data could not be removed and was kept for a safe retry." ;;
         ru:stt_data_kept) echo "Сохраненные модели STT оставлены для быстрой переустановки." ;;
         en:stt_data_kept) echo "Saved STT models were kept for a faster reinstall." ;;
-        ru:udev_prompt) echo "Удалить правило udev для доступа к /dev/uinput ($2)? [y/N]: " ;;
-        en:udev_prompt) echo "Remove the custom udev rule for /dev/uinput access ($2)? [y/N]: " ;;
+        ru:udev_prompt) echo "Удалить настройку прав uinput ($2) и неизменённую запись загрузки модуля Typr, если есть? [y/N]: " ;;
+        en:udev_prompt) echo "Remove uinput permission setup ($2) and the unchanged Typr module-loading entry, if present? [y/N]: " ;;
         ru:removing_udev) echo "Удаляю правило udev, могут потребоваться права sudo..." ;;
         en:removing_udev) echo "Removing udev rule, sudo may be required..." ;;
         ru:reloading_udev) echo "Перезагружаю правила udev..." ;;
@@ -229,13 +229,19 @@ fi
 
 # Clean up udev rules interactively
 UDEV_RULE_FILE="/etc/udev/rules.d/99-uinput.rules"
-if [ -f "$UDEV_RULE_FILE" ]; then
+MODULE_LOAD_FILE="/etc/modules-load.d/typr-uinput.conf"
+managed_module_entry() {
+    [ -f "$MODULE_LOAD_FILE" ] && [ ! -L "$MODULE_LOAD_FILE" ] \
+        && cmp -s "$MODULE_LOAD_FILE" <(printf 'uinput\n')
+}
+if [ -f "$UDEV_RULE_FILE" ] || managed_module_entry; then
     echo
     read -rp "$(msg udev_prompt "$UDEV_RULE_FILE")" yr
     yr=${yr:-n}
     if [[ "$yr" =~ ^[YyДд]$ ]]; then
         msg removing_udev
-        sudo rm -f "$UDEV_RULE_FILE"
+        if [ -f "$UDEV_RULE_FILE" ]; then sudo rm -f "$UDEV_RULE_FILE"; fi
+        if managed_module_entry; then sudo rm -f "$MODULE_LOAD_FILE"; fi
         msg reloading_udev
         if command -v udevadm &>/dev/null; then
             sudo udevadm control --reload-rules && sudo udevadm trigger

@@ -54,6 +54,9 @@
 # Shell syntax
 bash -n install.sh uninstall.sh
 
+# Installer regressions (mocked commands, temporary HOME, no real installation/services):
+./.venv/bin/python -m pytest -q tests/test_installer.py tests/test_uninstaller.py tests/test_project_skills.py
+
 # Installer preflight без изменений системы (интерактивен для выбора локального STT и зависит от текущего Linux desktop environment, не универсальный CI check):
 ./install.sh --dry-run
 ```

@@ -30,6 +30,23 @@ HotkeyManager / TrayIcon
 - `TrayIcon`, `SettingsDialog`, `HistoryDialog` - desktop UI и пользовательские действия;
   сетевые пробы `SettingsDialog` выполняются через Qt thread pool.
 
+### Discovery локального Parakeet
+
+Settings сначала использует `/models` и `/audio/models`. При их отсутствии
+Parakeet распознаётся по OpenAPI title `Parakeet TDT 0.6B v3 (optimized)` и paths
+`/health`, `/healthz`, `/v1/audio/transcriptions`. Только для этого контракта `/health`
+служит источником загруженных моделей: `ready=true`, default model присутствует в
+`loaded`, а все loaded IDs принадлежат каталогу `models`. Каталог не равнозначен
+установленным моделям; OpenAPI default сам по себе также не доказывает загрузку.
+Test Connection распознанного Parakeet использует ту же readiness-проверку, а не OPTIONS.
+До распознавания OpenAPI для Test Connection опционален: HTML, некорректный JSON,
+недоступность или HTTP-ошибка схемы не блокируют обычную OPTIONS-пробу transcription.
+Исключение — 401/403, которые сохраняются как ошибки авторизации. После распознавания
+ошибки `/health` и отсутствие readiness всегда завершают проверку ошибкой без OPTIONS fallback.
+Deployment root получается удалением конечного `/v1`, без потери path prefix.
+Все запросы остаются в существующем Qt thread pool. Для неизвестного endpoint
+не применяется статический Parakeet fallback.
+
 ## Инварианты
 
 1. Main Qt thread не выполняет длительные network, audio или input операции.

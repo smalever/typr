@@ -129,8 +129,8 @@ msg() {
         en:missing_list) echo "Missing packages ($2):" ;;
         ru:dry_done) echo "Режим dry-run: проверка зависимостей завершена. Пакеты не устанавливались." ;;
         en:dry_done) echo "Dry-run mode: dependency check completed. No packages were installed." ;;
-        ru:install_prompt) echo "Установить все отсутствующие пакеты сейчас? [Y/n]: " ;;
-        en:install_prompt) echo "Install all missing packages now? [Y/n]: " ;;
+        ru:install_prompt) echo "Установить все отсутствующие пакеты и разрешить sudo для сервисов/прав устройств? [Y/n]: " ;;
+        en:install_prompt) echo "Install all missing packages and allow sudo for service/device permission setup? [Y/n]: " ;;
         ru:aborted) echo "Установка отменена пользователем." ;;
         en:aborted) echo "Installation aborted by user." ;;
         ru:deps_ok) echo "Все системные зависимости установлены." ;;
@@ -163,15 +163,160 @@ msg() {
         en:next_steps) echo "Next steps:" ;;
         ru:step1) echo "1. Запустите Typr из меню приложений или выполните '$2/bin/typr'" ;;
         en:step1) echo "1. Launch Typr from your application menu or run '$2/bin/typr' to start the application" ;;
-        ru:step2) echo "2. Настройте OpenAI API key в Settings" ;;
-        en:step2) echo "2. Configure your OpenAI API key in Settings" ;;
-        ru:step3) echo "3. Используйте Meta+Shift+Space (по умолчанию) для записи" ;;
-        en:step3) echo "3. Use Meta+Shift+Space (default) to record" ;;
+        ru:step2) echo "2. Проверьте endpoint и модель в Settings; локальному STT API key не нужен. Для внешнего API укажите его параметры." ;;
+        en:step2) echo "2. Check the endpoint and model in Settings; local STT needs no API key. Configure provider settings for an external API." ;;
+        ru:step3) echo "3. Используйте Ctrl+Alt+Z (по умолчанию) для записи" ;;
+        en:step3) echo "3. Use Ctrl+Alt+Z (default) to record" ;;
         ru:autostart_on) echo "Приложение будет автоматически запускаться при входе в систему." ;;
         en:autostart_on) echo "The application will auto-start on login." ;;
         ru:autostart_off) echo "Чтобы отключить, удалите ~/.config/autostart/typr.desktop" ;;
         en:autostart_off) echo "To disable, remove ~/.config/autostart/typr.desktop" ;;
     esac
+}
+
+# Installer diagnostics which do not belong to the original message catalogue.
+notice() {
+    if [ "$UI_LANG" = ru ]; then printf '%s\n' "$1"; else printf '%s\n' "$2"; fi
+}
+
+authorize_system_changes() {
+    if [ "${SYSTEM_AUTHORIZED:-false}" = true ]; then return; fi
+    local answer
+    read -rp "$(notice 'Разрешить sudo для настройки сервисов и прав устройств? [Y/n]: ' 'Allow sudo for service and device permission setup? [Y/n]: ')" answer
+    if [[ ! "${answer:-y}" =~ ^[YyДд]$ ]]; then msg aborted; exit 1; fi
+    sudo -v
+    SYSTEM_AUTHORIZED=true
+}
+
+docker_cmd=(docker)
+# Resolve context metadata without invoking Docker (also used by dry-run).
+resolve_docker_endpoint() {
+    # Bootstrap simple selections without Python; defer JSON metadata until preflight.
+    if [ "${DOCKER_CONTEXT:-}" = default ]; then
+        printf '%s\n' unix:///var/run/docker.sock
+        return
+    fi
+    if [ -z "${DOCKER_CONTEXT:-}" ]; then
+        if [ -n "${DOCKER_HOST:-}" ]; then
+            printf '%s\n' "$DOCKER_HOST"
+            return
+        fi
+        if [ ! -f "${DOCKER_CONFIG:-$HOME/.docker}/config.json" ]; then
+            printf '%s\n' unix:///var/run/docker.sock
+            return
+        fi
+    fi
+    if ! command -v python3 >/dev/null 2>&1; then
+        notice 'Проверка Docker context отложена до установки Python; зависимости engine показаны консервативно.' 'Docker context validation deferred until Python is installed; engine dependencies are reported conservatively.' >&2
+        printf '%s\n' deferred
+        return
+    fi
+    python3 - "$UI_LANG" <<'PY'
+import json, os, pathlib, sys
+root = pathlib.Path(os.environ.get("DOCKER_CONFIG", str(pathlib.Path.home() / ".docker")))
+context = os.environ.get("DOCKER_CONTEXT", "")
+host = os.environ.get("DOCKER_HOST", "")
+try:
+    if not context and host:
+        print(host)
+    else:
+        if not context:
+            config = root / "config.json"
+            context = json.loads(config.read_text()).get("currentContext", "default") if config.exists() else "default"
+        if context == "default":
+            print("unix:///var/run/docker.sock")
+        else:
+            for file in (root / "contexts/meta").glob("*/meta.json"):
+                data = json.loads(file.read_text())
+                if data.get("Name") == context:
+                    print(data["Endpoints"]["docker"]["Host"])
+                    break
+            else:
+                raise ValueError("Unknown Docker context")
+except (OSError, ValueError, KeyError, TypeError):
+    raise SystemExit("Не удалось прочитать Docker context metadata; проверьте настройку context."
+                     if sys.argv[1] == "ru" else
+                     "Cannot resolve Docker context metadata; check Docker context configuration.")
+PY
+}
+
+validate_local_endpoint() {
+    if [[ "$1" != unix:///* ]]; then
+        notice 'Локальный STT требует локальный Docker unix endpoint: удалённый daemon публикует loopback на другом хосте. Выберите локальный context.' 'Local STT requires a local Docker unix endpoint: a remote daemon publishes loopback on another host. Select a local context.' >&2
+        return 1
+    fi
+}
+
+prepare_docker() {
+    local error endpoint available=false
+    endpoint=$(resolve_docker_endpoint)
+    validate_local_endpoint "$endpoint"
+    docker_cmd=(env -u DOCKER_CONTEXT -u DOCKER_HOST docker --host "$endpoint")
+    if error=$("${docker_cmd[@]}" info 2>&1); then available=true; fi
+    # Never elevate or start the system daemon for a custom/rootless endpoint.
+    if [[ "$endpoint" != unix:///var/run/docker.sock && "$endpoint" != unix:///run/docker.sock ]]; then
+        if [ "$available" = true ]; then return; fi
+        printf '%s\n' "$error" >&2
+        notice 'Docker endpoint недоступен. Запустите/исправьте выбранный Docker самостоятельно.' 'Docker endpoint unavailable. Start/repair the selected Docker endpoint yourself.' >&2
+        exit 1
+    fi
+    # Only connection/permission failures warrant system-daemon preparation.
+    if [ "$available" != true ] && ! [[ "$error" =~ [Pp]ermission\ denied|[Cc]annot\ connect|[Cc]onnection\ refused|[Nn]o\ such\ file ]]; then
+        printf '%s\n' "$error" >&2
+        exit 1
+    fi
+    if ! command -v systemctl >/dev/null || ! systemctl show --property=Version --value >/dev/null 2>&1; then
+        notice 'Нет работающего systemd. Запустите Docker вручную, проверьте docker info и повторите установку.' 'No running systemd. Start Docker manually, verify docker info, then rerun the installer.' >&2
+        exit 1
+    fi
+    if ! systemctl is-enabled --quiet docker.service || ! systemctl is-active --quiet docker.service; then
+        authorize_system_changes
+        sudo systemctl enable --now docker.service
+    fi
+    if "${docker_cmd[@]}" info >/dev/null 2>&1; then return; fi
+    # sudo is only a permissions fallback, not a fallback for daemon errors.
+    if error=$("${docker_cmd[@]}" info 2>&1); then return; fi
+    if [[ "$error" =~ [Pp]ermission\ denied ]]; then
+        docker_cmd=(sudo env -u DOCKER_CONTEXT -u DOCKER_HOST docker --host "$endpoint")
+        "${docker_cmd[@]}" info >/dev/null
+    else
+        printf '%s\n' "$error" >&2
+        exit 1
+    fi
+}
+
+wait_for_stt() {
+    local container="$1" url="$2" timeout=600
+    local deadline=$((SECONDS + timeout))
+    notice "Ожидаю готовности $container (до $timeout секунд)..." "Waiting for $container readiness (up to $timeout seconds)..."
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        if [ "$("${docker_cmd[@]}" container inspect --format '{{.State.Running}}' "$container")" != true ]; then break; fi
+        if "${docker_cmd[@]}" exec "$container" python -c \
+            'import sys, urllib.request; urllib.request.urlopen(sys.argv[1], timeout=2).close()' "$url" >/dev/null 2>&1; then
+            return
+        fi
+        sleep 2
+    done
+    notice "Ошибка: $container не готов. Последние строки логов:" "Error: $container is not ready. Recent logs:" >&2
+    "${docker_cmd[@]}" logs --tail 50 "$container" >&2 || true
+    exit 1
+}
+
+verify_parakeet_model() {
+    "${docker_cmd[@]}" exec "$1" python -c '
+import json, urllib.request
+with urllib.request.urlopen("http://localhost:5092/health", timeout=5) as response:
+    health = json.load(response)
+model = "parakeet-tdt-0.6b-v3"
+runtime = health.get("runtime", {}).get(model, {})
+if not (health.get("ready") is True and health.get("default_model") == model
+        and model in health.get("loaded", []) and model in health.get("models", [])
+        and runtime.get("backend") == "cpu" and runtime.get("encoder_precision") == "int8"):
+    raise SystemExit("Parakeet must have the default CPU INT8 model loaded; check /health")
+' || {
+        notice 'Ошибка: Parakeet не подтвердил загруженную CPU INT8 модель.' 'Error: Parakeet did not confirm the loaded CPU INT8 model.' >&2
+        return 1
+    }
 }
 
 setup_parakeet() {
@@ -180,7 +325,6 @@ setup_parakeet() {
     local stt_dir="$stt_base_dir/parakeet-tdt"
     local parakeet_image="parakeet-tdt:cpu"
     local parakeet_container="parakeet-tdt"
-    local docker_cmd=(docker)
     local expected_binding="127.0.0.1:5092"
 
     msg parakeet_setup_start
@@ -205,17 +349,6 @@ setup_parakeet() {
         exit 1
     fi
 
-    if ! docker info >/dev/null 2>&1; then
-        read -rp "$(msg stt_need_sudo)" stt_sudo_yn
-        stt_sudo_yn=${stt_sudo_yn:-y}
-        if [[ ! "$stt_sudo_yn" =~ ^[YyДд]$ ]]; then
-            msg parakeet_failed
-            exit 1
-        fi
-        sudo -v
-        docker_cmd=(sudo docker)
-    fi
-
     mkdir -p "$stt_dir/models"
     msg parakeet_starting
     if ! "${docker_cmd[@]}" build -f "$stt_dir/Dockerfile.cpu" -t "$parakeet_image" "$stt_dir"; then
@@ -226,13 +359,30 @@ setup_parakeet() {
     if "${docker_cmd[@]}" container inspect "$parakeet_container" >/dev/null 2>&1; then
         local existing_image
         local existing_binding
+        local expected_image_id existing_image_id existing_env existing_mount
         existing_image=$("${docker_cmd[@]}" container inspect --format '{{.Config.Image}}' "$parakeet_container")
         if [ "$existing_image" != "$parakeet_image" ]; then
             msg parakeet_name_conflict "$parakeet_container" "$existing_image"
             exit 1
         fi
-        existing_binding=$("${docker_cmd[@]}" port "$parakeet_container" 5092/tcp 2>/dev/null | head -n 1)
-        if [ "$existing_binding" != "$expected_binding" ]; then
+        existing_binding=$("${docker_cmd[@]}" port "$parakeet_container" 5092/tcp 2>/dev/null)
+        expected_image_id=$("${docker_cmd[@]}" image inspect --format '{{.Id}}' "$parakeet_image")
+        existing_image_id=$("${docker_cmd[@]}" container inspect --format '{{.Image}}' "$parakeet_container")
+        existing_env=$("${docker_cmd[@]}" container inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$parakeet_container")
+        if [ "$existing_binding" != "$expected_binding" ] \
+            || [ "$existing_image_id" != "$expected_image_id" ] \
+            || ! grep -qx 'PARAKEET_USE_GPU=false' <<< "$existing_env" \
+            || ! grep -qx 'PARAKEET_DEFAULT_MODEL=parakeet-tdt-0.6b-v3' <<< "$existing_env" \
+            || ! grep -qx 'PARAKEET_BATCHED=0' <<< "$existing_env"; then
+            if [ "$("${docker_cmd[@]}" container inspect --format '{{index .Config.Labels "io.typr.stt"}}' "$parakeet_container")" != parakeet ]; then
+                msg parakeet_name_conflict "$parakeet_container" "$existing_image (configuration/image mismatch; not owned by Typr)"
+                exit 1
+            fi
+            existing_mount=$("${docker_cmd[@]}" container inspect --format '{{range .Mounts}}{{if eq .Destination "/app/models"}}{{.Type}}:{{.Source}}:{{.RW}}{{end}}{{end}}' "$parakeet_container")
+            if [ "$existing_mount" != "bind:$stt_dir/models:true" ]; then
+                notice 'Конфликт models mount: контейнер сохранён; требуется ручная проверка.' 'Models mount conflict: container preserved; manual inspection required.' >&2
+                exit 1
+            fi
             if ! "${docker_cmd[@]}" rm -f "$parakeet_container" >/dev/null; then
                 msg parakeet_failed
                 exit 1
@@ -261,11 +411,13 @@ setup_parakeet() {
         fi
     fi
 
-    if [ "$("${docker_cmd[@]}" port "$parakeet_container" 5092/tcp 2>/dev/null | head -n 1)" != "$expected_binding" ]; then
+    if [ "$("${docker_cmd[@]}" port "$parakeet_container" 5092/tcp 2>/dev/null)" != "$expected_binding" ]; then
         msg parakeet_failed
         exit 1
     fi
 
+    wait_for_stt "$parakeet_container" http://localhost:5092/healthz
+    verify_parakeet_model "$parakeet_container"
     msg stt_ready
     msg parakeet_endpoint
 }
@@ -274,26 +426,13 @@ setup_gigastt() {
     local gigastt_image="ghcr.io/ekhodzitsky/gigastt:latest"
     local gigastt_container="gigastt"
     local gigastt_volume="gigastt-models"
-    local docker_cmd=(docker)
     local expected_binding="127.0.0.1:9876"
     local expected_cmd='["serve","--port","9876","--host","0.0.0.0","--bind-all","--pool-size","1"]'
-    local readiness_timeout=600
 
     msg gigastt_setup_start
     if ! command -v docker >/dev/null 2>&1; then
         msg docker_missing
         exit 1
-    fi
-
-    if ! docker info >/dev/null 2>&1; then
-        read -rp "$(msg stt_need_sudo)" stt_sudo_yn
-        stt_sudo_yn=${stt_sudo_yn:-y}
-        if [[ ! "$stt_sudo_yn" =~ ^[YyДд]$ ]]; then
-            msg gigastt_failed
-            exit 1
-        fi
-        sudo -v
-        docker_cmd=(sudo docker)
     fi
 
     msg gigastt_pulling
@@ -319,7 +458,7 @@ setup_gigastt() {
             exit 1
         fi
         existing_image_id=$("${docker_cmd[@]}" container inspect --format '{{.Image}}' "$gigastt_container")
-        existing_binding=$("${docker_cmd[@]}" port "$gigastt_container" 9876/tcp 2>/dev/null | head -n 1)
+        existing_binding=$("${docker_cmd[@]}" port "$gigastt_container" 9876/tcp 2>/dev/null)
         existing_cmd=$("${docker_cmd[@]}" container inspect --format '{{json .Config.Cmd}}' "$gigastt_container")
         existing_variant=$("${docker_cmd[@]}" container inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$gigastt_container" | grep -F 'GIGASTT_MODEL_VARIANT=rnnt' || true)
         if [ "$existing_binding" != "$expected_binding" ] \
@@ -356,16 +495,16 @@ setup_gigastt() {
         fi
     fi
 
-    if [ "$("${docker_cmd[@]}" port "$gigastt_container" 9876/tcp 2>/dev/null | head -n 1)" != "$expected_binding" ]; then
+    if [ "$("${docker_cmd[@]}" port "$gigastt_container" 9876/tcp 2>/dev/null)" != "$expected_binding" ]; then
         msg gigastt_failed
         exit 1
     fi
 
     msg gigastt_waiting
-    local waited=0
-    while [ "$waited" -lt "$readiness_timeout" ]; do
+    local deadline=$((SECONDS + 600))
+    while [ "$SECONDS" -lt "$deadline" ]; do
         if "${docker_cmd[@]}" exec "$gigastt_container" \
-            curl -fsS http://localhost:9876/ready >/dev/null 2>&1; then
+            curl --max-time 2 -fsS http://localhost:9876/ready >/dev/null 2>&1; then
             msg stt_ready
             msg gigastt_endpoint "9876"
             return
@@ -374,10 +513,9 @@ setup_gigastt() {
             break
         fi
         sleep 2
-        waited=$((waited + 2))
     done
 
-    msg gigastt_not_ready "$readiness_timeout"
+    msg gigastt_not_ready 600
     "${docker_cmd[@]}" logs --tail 50 "$gigastt_container" >&2 || true
     exit 1
 }
@@ -413,6 +551,11 @@ for arg in "$@"; do
     esac
 done
 
+if [ "$(id -u)" -eq 0 ]; then
+    notice 'Ошибка: запускайте установщик от пользователя без sudo, не от root.' 'Error: run the installer as a regular user without sudo, not as root.' >&2
+    exit 1
+fi
+
 echo "========================================="
 msg title
 echo "========================================="
@@ -427,26 +570,15 @@ read -rp "$(msg stt_choice_prompt)" stt_choice
 stt_choice=${stt_choice:-1}
 case "$stt_choice" in
     1)
-        if [ "$DRY_RUN" = true ]; then
-            msg stt_dryrun_parakeet
-        else
-            setup_parakeet
-        fi
+        [ "$DRY_RUN" != true ] || msg stt_dryrun_parakeet
         ;;
     2)
-        if [ "$DRY_RUN" = true ]; then
-            msg stt_dryrun_gigastt
-        else
-            setup_gigastt
-        fi
+        [ "$DRY_RUN" != true ] || msg stt_dryrun_gigastt
         ;;
     3)
         if [ "$DRY_RUN" = true ]; then
             msg stt_dryrun_parakeet
             msg stt_dryrun_gigastt
-        else
-            setup_parakeet
-            setup_gigastt
         fi
         ;;
     4)
@@ -582,6 +714,7 @@ case "$DISTRO" in
             "python-pyqt6"
             "python-pyaudio"
             "portaudio"
+            "base-devel"
         )
         ;;
     debian)
@@ -624,6 +757,39 @@ else
 fi
 
 PACKAGES+=("${CLIPBOARD_PACKAGES[@]}")
+# Docker/git are conditional: external STT must not require a local daemon.
+DOCKER_ENGINE_PKG=""
+if [ "$stt_choice" != 4 ]; then
+    DOCKER_ENDPOINT=$(resolve_docker_endpoint)
+    if [ "$DOCKER_ENDPOINT" != deferred ] && ! validate_local_endpoint "$DOCKER_ENDPOINT"; then
+        # Report all packages in dry-run, but never install or start on this endpoint.
+        if [ "$DRY_RUN" != true ]; then exit 1; fi
+        ENDPOINT_BLOCKED=true
+    fi
+    if [[ "$DOCKER_ENDPOINT" = deferred || "$DOCKER_ENDPOINT" = unix:///var/run/docker.sock || "$DOCKER_ENDPOINT" = unix:///run/docker.sock ]]; then
+        # Accept alternative engine packaging only if a daemon unit actually exists.
+        if [ "$DRY_RUN" = true ] || ! systemctl cat docker.service >/dev/null 2>&1; then
+            case "$DISTRO" in
+                arch) DOCKER_ENGINE_PKG="docker" ;;
+                debian) DOCKER_ENGINE_PKG="docker.io" ;;
+                fedora) DOCKER_ENGINE_PKG="moby-engine" ;;
+            esac
+            PACKAGES+=("$DOCKER_ENGINE_PKG")
+            if [ "$DISTRO" = fedora ]; then
+                PACKAGES+=(docker-cli)
+            fi
+        fi
+    elif ! command -v docker >/dev/null 2>&1; then
+        msg docker_missing
+        if [ "$DRY_RUN" != true ]; then exit 1; fi
+    fi
+fi
+if [[ "$stt_choice" = 1 || "$stt_choice" = 3 ]]; then PACKAGES+=(git); fi
+case "$DISTRO" in
+    arch) PACKAGES+=(kmod systemd) ;;
+    debian) PACKAGES+=(kmod udev) ;;
+    fedora) PACKAGES+=(kmod systemd-udev) ;;
+esac
 msg session_clipboard "$SESSION_TYPE" "${CLIPBOARD_PACKAGES[*]}"
 
 # 4. Helper functions to check and install packages
@@ -673,6 +839,13 @@ for pkg in "${PACKAGES[@]}"; do
     fi
 done
 
+if [ "$DRY_RUN" = true ]; then
+    if [ "$stt_choice" != 4 ]; then
+        notice 'План: проверить выбранный Docker endpoint; при необходимости enable --now docker.service (только локальный systemd), затем STT с unless-stopped и проверкой готовности.' 'Plan: verify selected Docker endpoint; if needed enable --now docker.service (local systemd only), then STT with unless-stopped and readiness checks.'
+    fi
+    notice 'План: venv, pip install/check и imports, desktop/autostart, модуль uinput, группа input и udev; при необходимости /etc/modules-load.d/typr-uinput.conf. Никаких изменений.' 'Plan: venv, pip install/check and imports, desktop/autostart, uinput module, input group and udev; /etc/modules-load.d/typr-uinput.conf if needed. No changes.'
+fi
+
 if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
     echo
     msg missing_list "${#MISSING_PACKAGES[@]}"
@@ -683,6 +856,7 @@ if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
 
     if [ "$DRY_RUN" = true ]; then
         msg dry_done
+        if [ "${ENDPOINT_BLOCKED:-false}" = true ]; then exit 1; fi
         exit 0
     fi
 
@@ -690,6 +864,7 @@ if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
     yr=${yr:-y}
     if [[ "$yr" =~ ^[Yy]$ ]]; then
         install_packages "${MISSING_PACKAGES[@]}"
+        SYSTEM_AUTHORIZED=true
     else
         msg aborted
         exit 1
@@ -698,8 +873,19 @@ else
     msg deps_ok
     if [ "$DRY_RUN" = true ]; then
         msg dry_no_action
+        if [ "${ENDPOINT_BLOCKED:-false}" = true ]; then exit 1; fi
         exit 0
     fi
+fi
+
+authorize_system_changes
+if [ "$stt_choice" != 4 ]; then
+    prepare_docker
+    case "$stt_choice" in
+        1) setup_parakeet ;;
+        2) setup_gigastt ;;
+        3) setup_parakeet; setup_gigastt ;;
+    esac
 fi
 
 echo
@@ -715,10 +901,24 @@ if [ ! -d "$VENV_DIR" ]; then
     python3 -m venv "$VENV_DIR"
 fi
 
+# Fail explicitly rather than silently deleting an incompatible environment.
+if ! "$VENV_DIR/bin/python" -c '
+import os, sys
+assert sys.prefix != sys.base_prefix, "Not a virtual environment"
+assert sys.version_info >= (3, 10), "Python 3.10+ required"
+assert os.path.realpath(sys.base_prefix) == os.path.realpath(sys.argv[1]), "Interpreter mismatch"
+assert str(sys.version_info[:2]) == sys.argv[2], "Interpreter version mismatch"
+' "$(python3 -c 'import sys; print(sys.base_prefix)')" "$(python3 -c 'import sys; print(sys.version_info[:2])')"; then
+    notice 'Несовместимая .venv. Пересоздайте её выбранным python3 и повторите установку.' 'Incompatible .venv. Recreate it with the selected python3 and rerun the installer.' >&2
+    exit 1
+fi
+
 # Install Python package
 msg install_py "$VENV_DIR"
 "$VENV_PIP" install --upgrade pip
 "$VENV_PIP" install -e "$SCRIPT_DIR[dev]"
+"$VENV_PIP" check
+"$VENV_DIR/bin/python" -c 'from PyQt6 import QtCore, QtGui, QtWidgets; import pyaudio, httpx, websockets, evdev; import typr.__main__'
 configure_new_gigastt_config
 
 echo
@@ -749,6 +949,19 @@ fi
 
 # Add udev rules for /dev/uinput and add user to input group
 msg configure_uinput
+authorize_system_changes
+sudo modprobe uinput
+# Built-in modules need no persistent loading. Preserve all existing entries.
+if [ "$(modinfo -F filename uinput)" != '(builtin)' ] \
+    && ! grep -Eq '^[[:space:]]*uinput([[:space:]#]|$)' /etc/modules-load.d/*.conf /usr/lib/modules-load.d/*.conf /run/modules-load.d/*.conf 2>/dev/null; then
+    MODULE_LOAD_FILE=/etc/modules-load.d/typr-uinput.conf
+    if [ -e "$MODULE_LOAD_FILE" ] || [ -L "$MODULE_LOAD_FILE" ]; then
+        notice "Конфликт: проверьте $MODULE_LOAD_FILE; файл не изменён." "Conflict: check $MODULE_LOAD_FILE; file left unchanged." >&2
+        exit 1
+    fi
+    printf 'uinput\n' | sudo tee "$MODULE_LOAD_FILE" >/dev/null
+fi
+getent group input >/dev/null || sudo groupadd --system input
 # Add user to input group if not already there
 if ! groups | grep -q "\binput\b"; then
     msg add_input_group "$USER"
@@ -758,12 +971,19 @@ fi
 
 # Install udev rule for uinput if not already there
 UDEV_RULE_FILE="/etc/udev/rules.d/99-uinput.rules"
-if [ ! -f "$UDEV_RULE_FILE" ]; then
+if [ ! -e "$UDEV_RULE_FILE" ] && [ ! -L "$UDEV_RULE_FILE" ]; then
     msg create_udev
     echo 'KERNEL=="uinput", GROUP="input", MODE="0660"' | sudo tee "$UDEV_RULE_FILE" > /dev/null
-    msg reload_udev
-    sudo udevadm control --reload-rules && sudo udevadm trigger
-    msg udev_updated
+fi
+
+msg reload_udev
+sudo udevadm control --reload-rules
+sudo udevadm trigger --action=add --sysname-match=uinput
+sudo udevadm settle
+msg udev_updated
+if [ ! -c /dev/uinput ] || [ "$(stat -c '%G:%a' /dev/uinput)" != input:660 ]; then
+    notice 'Ошибка прав /dev/uinput: ожидается input:0660. Проверьте существующие udev rules; чужие правила не перезаписаны.' 'Incorrect /dev/uinput permissions: expected input:0660. Check existing udev rules; existing rules were not overwritten.' >&2
+    exit 1
 fi
 
 echo
@@ -775,6 +995,10 @@ echo
 msg next_steps
 msg step1 "$VENV_DIR"
 msg step2
+case "$stt_choice" in
+    1|3) msg parakeet_endpoint ;;&
+    2|3) msg gigastt_endpoint 9876 ;;
+esac
 msg step3
 echo
 msg autostart_on

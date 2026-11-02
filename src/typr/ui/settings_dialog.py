@@ -57,6 +57,43 @@ def _authorization_headers(api_key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
 
+def _deployment_root(base_url: str) -> str:
+    base_url = base_url.rstrip("/")
+    return base_url.removesuffix("/v1")
+
+
+def _parakeet_models(
+    client: httpx.Client, root: str, headers: dict[str, str], schema: dict,
+) -> list[str] | None:
+    """Discover loaded models only for the identified Parakeet health contract."""
+    paths = schema.get("paths", {})
+    info = schema.get("info")
+    if not (
+        isinstance(info, dict)
+        and info.get("title") == "Parakeet TDT 0.6B v3 (optimized)"
+        and isinstance(paths, dict)
+        and all(path in paths for path in ("/health", "/healthz", "/v1/audio/transcriptions"))
+    ):
+        return None
+    response = client.get(f"{root}/health", headers=headers)
+    response.raise_for_status()
+    health = response.json()
+    if not isinstance(health, dict):
+        raise ValueError("Invalid Parakeet health response")
+    catalogue, loaded = health.get("models"), health.get("loaded")
+    if not (
+        isinstance(catalogue, list) and isinstance(loaded, list)
+        and all(isinstance(model, str) and model.strip() for model in catalogue + loaded)
+        and set(loaded) <= set(catalogue)
+        and isinstance(health.get("default_model"), str)
+        and health["default_model"] in catalogue
+    ):
+        raise ValueError("Invalid Parakeet model metadata")
+    if health.get("ready") is not True or health["default_model"] not in loaded:
+        raise ValueError("Parakeet model is not ready")
+    return sorted(set(loaded))
+
+
 def _request_models(base_url: str, api_key: str) -> list[str]:
     """Fetch model identifiers from an OpenAI-compatible endpoint."""
     headers = _authorization_headers(api_key)
@@ -66,11 +103,16 @@ def _request_models(base_url: str, api_key: str) -> list[str]:
             response = client.get(f"{base_url}/audio/models", headers=headers)
         if response.status_code == 404:
             schema_response = client.get(
-                f"{base_url.rsplit('/v1', 1)[0]}/openapi.json",
+                f"{_deployment_root(base_url)}/openapi.json",
                 headers=headers,
             )
             schema_response.raise_for_status()
             schema = schema_response.json()
+            if not isinstance(schema, dict):
+                raise ValueError("Invalid OpenAPI response")
+            loaded = _parakeet_models(client, _deployment_root(base_url), headers, schema)
+            if loaded is not None:
+                return loaded
             model_enum = (
                 schema.get("paths", {})
                 .get("/v1/audio/transcriptions", {})
@@ -120,6 +162,29 @@ def _probe_api(base_url: str, api_key: str) -> bool:
         if response.status_code != 404:
             response.raise_for_status()
             return False
+
+        # OpenAPI is optional until the service has been positively identified.
+        # Keep health validation outside these catches: identified Parakeet must
+        # never fall back to a successful OPTIONS probe when its model is unready.
+        try:
+            schema_response = client.get(
+                f"{_deployment_root(base_url)}/openapi.json", headers=headers,
+            )
+        except httpx.TransportError:
+            logger.debug("Optional OpenAPI probe unavailable; using transcription probe")
+            schema_response = None
+        if schema_response is not None and schema_response.status_code in (401, 403):
+            schema_response.raise_for_status()
+        if schema_response is not None and schema_response.is_success:
+            try:
+                schema = schema_response.json()
+            except ValueError:
+                logger.debug("Optional OpenAPI response is not JSON; using transcription probe")
+                schema = None
+            if isinstance(schema, dict) and _parakeet_models(
+                client, _deployment_root(base_url), headers, schema,
+            ) is not None:
+                return False
 
         probe = client.options(f"{base_url}/audio/transcriptions", headers=headers)
         if probe.status_code == 404 or probe.status_code in (401, 403):
