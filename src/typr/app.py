@@ -48,6 +48,10 @@ class TyprApp(QObject):
 
         # Initialize state
         self._state = AppState.IDLE
+        self._shutting_down = False
+        self._injection_token = None
+        self._injection_text = ""
+        self._quit_completed = False
 
         # Initialize components
         self._init_components()
@@ -98,6 +102,8 @@ class TyprApp(QObject):
         # Transcription -> Text injection
         self.transcriber.transcription_complete.connect(self._on_transcription_complete)
         self.transcriber.transcription_error.connect(self._on_error)
+        self.text_injector.injection_completed.connect(self._on_injection_completed)
+        self.text_injector.injection_failed.connect(self._on_injection_failed)
 
         # UI
         self.tray_icon.settings_requested.connect(self._show_settings)
@@ -153,6 +159,8 @@ class TyprApp(QObject):
     @pyqtSlot()
     def _on_recording_start(self) -> None:
         """Handle recording start from hotkey."""
+        if self._shutting_down:
+            return
         if self._state != AppState.IDLE:
             logger.debug(f"Cannot start recording in state {self._state}")
             return
@@ -166,6 +174,8 @@ class TyprApp(QObject):
     @pyqtSlot()
     def _on_recording_stop(self) -> None:
         """Handle recording stop from hotkey."""
+        if self._shutting_down:
+            return
         if self._state != AppState.RECORDING:
             logger.debug(f"Cannot stop recording in state {self._state}")
             return
@@ -176,6 +186,8 @@ class TyprApp(QObject):
     @pyqtSlot(bytes)
     def _on_audio_ready(self, audio_data: bytes) -> None:
         """Handle completed audio recording."""
+        if self._shutting_down:
+            return
         if not audio_data:
             self._set_state(AppState.IDLE, tr("app.notify.no_audio", "No audio recorded"))
             return
@@ -186,6 +198,8 @@ class TyprApp(QObject):
     @pyqtSlot(str)
     def _on_transcription_complete(self, text: str) -> None:
         """Handle completed transcription."""
+        if self._shutting_down or self._state != AppState.TRANSCRIBING:
+            return
         if not text or not text.strip():
             logger.info("Empty transcription result")
             self._set_state(AppState.IDLE)
@@ -194,21 +208,38 @@ class TyprApp(QObject):
         logger.info(f"Transcription: {text[:50]}...")
         self._record_history(text)
         self._set_state(AppState.TYPING)
-
-        # Type the text
-        if self.text_injector.type_text(text):
-            if self.config.ui.show_notifications:
-                self.tray_icon.show_notification(
-                    tr("app.notify.transcription_complete", "Transcription Complete"),
-                    text[:100] + ("..." if len(text) > 100 else ""),
-                    self.tray_icon.MessageIcon.Information,
-                    self.config.ui.notification_duration,
-                )
-        else:
-            self._set_state(AppState.ERROR, tr("app.notify.type_failed", "Failed to type text"))
+        if self._shutting_down:
             return
 
+        token = object()
+        self._injection_token = token
+        self._injection_text = text
+        self.text_injector.request_injection(text, token)
+
+    @pyqtSlot(object)
+    def _on_injection_completed(self, token: object) -> None:
+        if self._shutting_down or token is not self._injection_token:
+            return
+        self._injection_token = None
+        text = self._injection_text
+        self._injection_text = ""
+        if self.config.ui.show_notifications:
+            self.tray_icon.show_notification(
+                tr("app.notify.transcription_complete", "Transcription Complete"),
+                text[:100] + ("..." if len(text) > 100 else ""),
+                self.tray_icon.MessageIcon.Information,
+                self.config.ui.notification_duration,
+            )
         self._set_state(AppState.IDLE)
+
+    @pyqtSlot(object, str)
+    def _on_injection_failed(self, token: object, message: str) -> None:
+        if self._shutting_down or token is not self._injection_token:
+            return
+        self._injection_token = None
+        self._injection_text = ""
+        logger.error(f"Text injection failed: {message}")
+        self._set_state(AppState.ERROR, tr("app.notify.type_failed", "Failed to type text"))
 
     def _record_history(self, text: str) -> None:
         """Persist a completed transcription to history if enabled."""
@@ -226,11 +257,15 @@ class TyprApp(QObject):
     @pyqtSlot(str)
     def _on_error(self, message: str) -> None:
         """Handle errors from components."""
+        if self._shutting_down or self._state == AppState.TYPING:
+            return
         self._set_state(AppState.ERROR, message)
 
     @pyqtSlot(str)
     def _on_hotkey_error(self, message: str) -> None:
         """Handle hotkey registration errors."""
+        if self._shutting_down:
+            return
         logger.error(f"Hotkey error: {message}")
         # Don't change state, just notify
         self.tray_icon.show_notification(
@@ -272,7 +307,7 @@ class TyprApp(QObject):
     @pyqtSlot()
     def _recover_from_error(self) -> None:
         """Recover from error state."""
-        if self._state == AppState.ERROR:
+        if not self._shutting_down and self._state == AppState.ERROR:
             self._set_state(AppState.IDLE)
 
     @pyqtSlot()
@@ -326,20 +361,35 @@ class TyprApp(QObject):
     def _quit(self) -> None:
         """Quit the application."""
         logger.info("Quitting Typr")
+        if self._shutting_down:
+            return
+        self._shutting_down = True
+        self._injection_token = None
+        self._injection_text = ""
+        try:
+            # Invalidate injection BEFORE persistence, even if save later fails.
+            self.text_injector.cleanup()
+            if self._state == AppState.RECORDING:
+                self.audio_recorder.cancel_recording()
+            self.config.save()
+        except Exception as exc:  # Qt shutdown boundary
+            logger.error(f"Shutdown/save failed: {exc}")
+        finally:
+            for component in (self.audio_recorder, self.hotkey_manager):
+                try:
+                    component.cleanup()
+                except Exception as exc:
+                    logger.error(f"Component cleanup failed: {exc}")
+            self._finish_quit_when_injection_closed()
 
-        # Cancel any ongoing recording
-        if self._state == AppState.RECORDING:
-            self.audio_recorder.cancel_recording()
-
-        # Save config
-        self.config.save()
-
-        # Cleanup
-        self.audio_recorder.cleanup()
-        self.hotkey_manager.cleanup()
-        self.text_injector.cleanup()
-
-        # Quit application
+    def _finish_quit_when_injection_closed(self) -> None:
+        """Keep Qt alive until Linux worker finally has released its resources."""
+        if self._quit_completed:
+            return
+        if not self.text_injector.is_cleanup_complete():
+            QTimer.singleShot(10, self._finish_quit_when_injection_closed)
+            return
+        self._quit_completed = True
         QApplication.quit()
 
     def get_state(self) -> AppState:

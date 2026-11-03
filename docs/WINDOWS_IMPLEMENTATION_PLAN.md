@@ -2,7 +2,7 @@
 
 ## Статус и правила исполнения
 
-Этапы 1–2 реализованы (статус и открытые gates ниже); этапы 3–4 остаются **планом будущих
+Этапы 1–3 реализованы (статус и открытые gates ниже); этап 4 остается **планом будущих
 изменений**. Поддержка Windows приложения еще **не готова**. Действующая архитектура
 описана в [ARCHITECTURE.md](ARCHITECTURE.md), правила документации — в [DOCUMENTATION_POLICY.md](DOCUMENTATION_POLICY.md).
 - Агент выполняет только явно порученный этап; наличие плана не разрешает произвольные изменения системы, запуск GUI или commit.
@@ -185,6 +185,50 @@ non-letter keys выявила canonical PortableText `Del`/`Ins`: key map ис�
 - Критерии проверки (Gate): unit-тесты с моками Win32 API (keydown/keyup, left/right, duplicate down, injected, unhook); отсутствие регрессий Linux evdev.
 
 ### Этап 3 — Неблокирующая вставка и clipboard-политика (SendInput)
+
+**Статус (2026-11-03): реализация, автоматизированные проверки и независимое
+ревью завершены; Linux native regression и desktop smoke открыты.**
+
+QObject facade использует `request_injection(text, token) -> bool`,
+`injection_completed(token)` / `injection_failed(token, reason)`. Token — уникальный
+caller-generated object, сравнение по identity; app устанавливает его до request.
+Bool — acceptance; busy дает queued failure, shutdown terminal и подавляет все callbacks.
+Kickoff async, backend result queued, внутренний serial отбрасывает late completion.
+History фиксируется до injection, TYPING — до отправки/ошибки. Quit инвалидирует
+injection до config.save и защищает остальной cleanup через finally.
+
+Windows: полная INPUT union / explicit ctypes signatures, bounded paste-key timer,
+main Qt thread clipboard, точный SendInput count и prefix-based synthetic keyup cleanup.
+Никаких clear/restore, даже error/shutdown. README clipboard policy добавлена сейчас;
+**Settings/i18n подсказка и адаптация Linux-строк остаются этапу 4**.
+Linux: один worker владеет initialization/uinput/helpers/restore deadline и cleanup;
+Qt не выполняет sleep/helper I/O/join. Сохранены Shift+Insert, backend selection,
+text comparison restore и helper ownership; bounded pipe/read/cleanup, cancellation
+между шагами и диагностика ошибок. Подробный контракт — в ARCHITECTURE.md.
+
+Независимое review выявило и исправлено: (P2) удерживаемая физическая V не входила
+в ожидание — теперь V проверяется вместе с modifiers до публикации, без принудительного
+keyup; (P2) xclip/xsel отделяли owner от Popen — добавлены -quiet/--nodetach по upstream
+man pages, точные commands и cleanup current/restored owner покрыты тестами. Xclip clear
+без backup использует managed foreground owner пустой строки.
+Архитектурная доработка: `is_cleanup_complete() -> bool` у facade/backend и неблокирующий
+QTimer barrier в app. Quit после save/finally ждет фактического завершения Linux worker
+после session.close, даже при save failure. Windows/no backend immediate; повторный quit
+идемпотентен. Нет UI join или принудительного timeout: непрерываемый device syscall может
+задержать выход. Event regression удерживает worker close и проверяет responsive Qt,
+отсутствие раннего quit и ровно один окончательный quit.
+
+Финальный full applicable suite на Windows — **157 passed, 2 skipped** (shell
+modules skipped); targeted mocked QCoreApplication tests — **46 passed**, также
+повторены три раза без ошибок. Использован временный toolchain этапа 1
+(Python 3.15.2 / Qt и PyQt 6.12.0), без GUI, native clipboard, SendInput и hardware.
+Scoped ruff и `git diff --check` прошли; `python -m build --no-isolation` создал
+sdist/wheel 0.4.0 в Temp `typr-stage3-dist`. Проверено включение исправленных
+backends и cleanup barrier в wheel, чистый Windows import без evdev.
+Повторное независимое read-only ревью исправлений: подтвержденных дефектов нет,
+оба P2 закрыты; shutdown barrier принят. Установка wheel и `pip check` не выполнялись.
+Linux native gates, релизная minor Python и stage-4 audio/UI/package не выполнялись.
+
 - Область записи: файлы Windows text injector в `src/typr/platforms/` (например, `windows_injector.py`), селектор платформ, `src/typr/core/text_injector.py`, `src/typr/app.py`.
 - Область записи (tests): `tests/test_windows_text_injector.py`, `tests/test_text_injector.py`, `tests/test_app.py`.
 - Документация: `docs/ARCHITECTURE.md`, этот план.

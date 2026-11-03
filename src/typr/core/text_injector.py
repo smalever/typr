@@ -1,379 +1,97 @@
-"""Text injection using evdev UInput for Wayland/X11."""
+"""Asynchronous, platform-neutral text injection boundary."""
 
-import os
-import shutil
-import subprocess
-import time
+from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal, pyqtSlot
 
-from PyQt6.QtCore import QTimer
-
+from typr.platforms import injection_backend
 from typr.utils.logger import logger
 
-try:
-    from evdev import UInput, ecodes
 
-    EVDEV_AVAILABLE = True
-except ImportError:
-    EVDEV_AVAILABLE = False
-    logger.warning("evdev not available for text injection")
+class TextInjector(QObject):
+    """One active request; unique caller-owned tokens are compared by identity.
 
+    Acceptance is not success. Rejections emit failure asynchronously. Cleanup
+    is terminal and suppresses callbacks. Public methods run on main Qt thread.
+    """
 
-class TextInjector:
-    """Injects text using evdev UInput (works on Wayland and X11)."""
+    injection_completed = pyqtSignal(object)
+    injection_failed = pyqtSignal(object, str)
 
-    def __init__(self, typing_delay: int = 0, restore_delay: int = 3000):
-        """Initialize text injector.
-
-        Args:
-            typing_delay: Delay between keystrokes in milliseconds.
-            restore_delay: Delay before restoring clipboard in milliseconds.
-        """
+    def __init__(self, typing_delay=0, restore_delay=3000, parent=None):
+        super().__init__(parent)
         self.typing_delay = typing_delay
         self.restore_delay = restore_delay
-        self._ui: UInput | None = None
-        self._available = False
-        self._clipboard_restore_timer: QTimer | None = None
-        self._clipboard_process: subprocess.Popen | None = None
-        self._backup_text = ""
-        self._has_backup = False
-        self._pasted_text = ""
-        self._init_uinput()
+        self._backend = None
+        self._closed = False
+        self._serial = 0
+        self._active = None
 
-    def _init_uinput(self) -> None:
-        """Initialize UInput device."""
-        if not EVDEV_AVAILABLE:
-            logger.error("evdev not available")
-            return
+    def _get_backend(self):
+        if self._backend is None:
+            self._backend = injection_backend()()
+            self._backend.result.connect(self._result, Qt.ConnectionType.QueuedConnection)
+        return self._backend
 
+    def is_available(self):
+        if self._closed:
+            return False
         try:
-            # Create a virtual keyboard device
-            self._ui = UInput(name="typr-keyboard")
-            self._available = True
-            logger.info("UInput text injector initialized")
-        except PermissionError:
-            logger.error("No permission for /dev/uinput. Add user to 'input' group.")
-        except Exception as e:
-            logger.error(f"Failed to create UInput: {e}")
-
-    def is_available(self) -> bool:
-        """Check if text injection is available."""
-        return self._available and self._ui is not None
-
-    def type_text(self, text: str) -> bool:
-        """Type text at current cursor position.
-
-        Args:
-            text: The text to type.
-
-        Returns:
-            True if successful, False otherwise.
-        """
-        if not text:
-            return True
-
-        if not self.is_available():
-            logger.error("Text injector not available")
+            return self._get_backend().is_available()
+        except (OSError, RuntimeError, ImportError) as exc:
+            logger.error(f"Text injection unavailable: {exc}")
             return False
 
-        try:
-            backend = self._detect_clipboard_backend()
-            if backend is None:
-                logger.error(
-                    "No clipboard backend (wl-clipboard/xclip/xsel) available. Cannot paste text."
-                )
-                return False
-            return self._paste_text(text)
-
-        except Exception as e:
-            logger.error(f"Text injection failed: {e}")
+    def request_injection(self, text: str, token: object) -> bool:
+        if self._closed:
             return False
-
-    def _backup_clipboard(self) -> None:
-        """Back up the current clipboard text."""
-        self._backup_text = ""
-        self._has_backup = False
-
-        backend = self._detect_clipboard_backend()
-        if backend is None:
-            return
-
-        try:
-            if backend == "wl-copy":
-                # wl-paste exits with code 1 if empty or if clipboard format is not text
-                res = subprocess.run(
-                    ["wl-paste", "-n"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
-                    timeout=0.5,
-                )
-                if res.returncode == 0:
-                    self._backup_text = res.stdout.decode("utf-8", errors="replace")
-                    self._has_backup = True
-            elif backend == "xclip":
-                res = subprocess.run(
-                    ["xclip", "-selection", "clipboard", "-o"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
-                    timeout=0.5,
-                )
-                if res.returncode == 0:
-                    self._backup_text = res.stdout.decode("utf-8", errors="replace")
-                    self._has_backup = True
-            elif backend == "xsel":
-                res = subprocess.run(
-                    ["xsel", "--clipboard", "--output"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
-                    timeout=0.5,
-                )
-                if res.returncode == 0:
-                    self._backup_text = res.stdout.decode("utf-8", errors="replace")
-                    self._has_backup = True
-
-            if self._has_backup:
-                logger.debug(f"Clipboard backed up successfully ({len(self._backup_text)} chars)")
-        except subprocess.TimeoutExpired:
-            logger.warning("Clipboard backup timed out")
-        except Exception as e:
-            logger.debug(f"Failed to backup clipboard: {e}")
-
-    def _restore_clipboard(self) -> None:
-        """Restore the original clipboard content if the user hasn't overwritten it."""
-        backend = self._detect_clipboard_backend()
-        if backend is None:
-            return
-
-        # Check if the clipboard still has the pasted text
-        current_text = ""
-        try:
-            if backend == "wl-copy":
-                res = subprocess.run(
-                    ["wl-paste", "-n"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
-                    timeout=0.5,
-                )
-                if res.returncode == 0:
-                    current_text = res.stdout.decode("utf-8", errors="replace")
-            elif backend == "xclip":
-                res = subprocess.run(
-                    ["xclip", "-selection", "clipboard", "-o"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
-                    timeout=0.5,
-                )
-                if res.returncode == 0:
-                    current_text = res.stdout.decode("utf-8", errors="replace")
-            elif backend == "xsel":
-                res = subprocess.run(
-                    ["xsel", "--clipboard", "--output"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
-                    timeout=0.5,
-                )
-                if res.returncode == 0:
-                    current_text = res.stdout.decode("utf-8", errors="replace")
-        except Exception as e:
-            logger.debug(f"Failed to read clipboard for verification: {e}")
-            return
-
-        # Preserve clipboard content copied by the user after the paste.
-        if current_text != self._pasted_text:
-            logger.debug("Clipboard content changed by user, skipping restore")
-            self._terminate_clipboard_process()
-            return
-
-        self._terminate_clipboard_process()
-
-        # Perform restore
-        if not self._has_backup:
-            # Clear clipboard
-            try:
-                if backend == "wl-copy":
-                    subprocess.run(
-                        ["wl-copy", "--clear"],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                    )
-                elif backend == "xclip":
-                    subprocess.run(
-                        ["xclip", "-selection", "clipboard", "/dev/null"],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                    )
-                elif backend == "xsel":
-                    subprocess.run(
-                        ["xsel", "--clipboard", "--clear"],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                    )
-                logger.debug("Clipboard cleared (no backup existed)")
-            except Exception as e:
-                logger.debug(f"Failed to clear clipboard: {e}")
-            return
-
-        try:
-            # Restore original clipboard
-            process = self._spawn_clipboard_backend(backend, self._backup_text)
-            if process is not None:
-                self._clipboard_process = process
-                logger.debug(f"Clipboard restored ({len(self._backup_text)} chars)")
-        except Exception as e:
-            logger.error(f"Failed to restore clipboard: {e}")
-
-    def _paste_text(self, text: str) -> bool:
-        """Paste Unicode text through a desktop-specific clipboard backend."""
-        backend = self._detect_clipboard_backend()
-        if backend is None:
-            logger.error("No clipboard backend available for Unicode paste")
+        if self._active is not None:
+            QTimer.singleShot(0, lambda: self._reject(token, "Text injector is busy"))
             return False
-
-        if self._clipboard_restore_timer is not None:
-            self._clipboard_restore_timer.stop()
-        if self._clipboard_process is not None:
-            self._restore_clipboard()
-
-        # Backup clipboard first
-        self._backup_clipboard()
-        self._pasted_text = text
-
-        process = self._spawn_clipboard_backend(backend, text)
-        if process is None:
-            return False
-
-        self._terminate_clipboard_process()
-        self._clipboard_process = process
-
-        time.sleep(0.12)
-        self._type_modified_key(ecodes.KEY_INSERT, shift=True)
-
-        self._schedule_clipboard_release(self.restore_delay)
-        logger.info(f"Pasted {len(text)} characters through {backend}")
+        self._serial += 1
+        serial = self._serial
+        self._active = (serial, token)
+        delays = (self.typing_delay, self.restore_delay)
+        QTimer.singleShot(0, lambda: self._start(serial, text, delays))
         return True
 
-    def _schedule_clipboard_release(self, delay_ms: int = 1500) -> None:
-        """Release clipboard backend after targets have had time to consume the paste."""
-        if self._clipboard_restore_timer is None:
-            self._clipboard_restore_timer = QTimer()
-            self._clipboard_restore_timer.setSingleShot(True)
-            self._clipboard_restore_timer.timeout.connect(self._on_release_clipboard_timeout)
+    def _reject(self, token, reason):
+        if not self._closed:
+            self.injection_failed.emit(token, reason)
 
-        self._clipboard_restore_timer.start(delay_ms)
-
-    def _on_release_clipboard_timeout(self) -> None:
-        """Restore clipboard after the paste target has consumed its contents."""
-        self._restore_clipboard()
-
-    def _detect_clipboard_backend(self) -> str | None:
-        """Pick the best available clipboard backend for the current session."""
-        if os.environ.get("WAYLAND_DISPLAY") and shutil.which("wl-copy"):
-            return "wl-copy"
-        if os.environ.get("DISPLAY"):
-            if shutil.which("xclip"):
-                return "xclip"
-            if shutil.which("xsel"):
-                return "xsel"
-        return None
-
-    def _spawn_clipboard_backend(self, backend: str, text: str) -> subprocess.Popen | None:
-        """Start a clipboard backend process and feed it text."""
-        commands = {
-            "wl-copy": ["wl-copy", "--type", "text/plain;charset=utf-8", "--foreground"],
-            "xclip": ["xclip", "-selection", "clipboard", "-in"],
-            "xsel": ["xsel", "--clipboard", "--input"],
-        }
-        command = commands.get(backend)
-        if command is None:
-            logger.error(f"Unsupported clipboard backend: {backend}")
-            return None
-
-        try:
-            process = subprocess.Popen(
-                command,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                text=False,
-            )
-            assert process.stdin is not None
-            process.stdin.write(text.encode("utf-8"))
-            process.stdin.close()
-            return process
-        except Exception as e:
-            logger.error(f"Failed to start clipboard backend {backend}: {e}")
-            return None
-
-    def _terminate_clipboard_process(self) -> None:
-        """Stop any running clipboard helper process."""
-        if self._clipboard_process is None:
+    def _start(self, serial, text, delays):
+        if self._closed or self._active is None or self._active[0] != serial:
             return
         try:
-            if self._clipboard_process.poll() is None:
-                self._clipboard_process.terminate()
-                self._clipboard_process.wait(timeout=0.2)
-        except Exception:
-            try:
-                self._clipboard_process.kill()
-            except Exception:
-                pass
-        finally:
-            self._clipboard_process = None
+            self._get_backend().request(serial, text, *delays)
+        except Exception as exc:  # Qt runtime boundary
+            logger.error(f"Text injection startup failed: {exc}")
+            self._result(serial, str(exc))
 
-    def _type_modified_key(self, key_code: int, shift: bool = False, ctrl: bool = False) -> None:
-        """Type a key with Ctrl and/or Shift modifiers."""
-        if not self._ui:
+    @pyqtSlot(int, str)
+    def _result(self, serial, error):
+        if self._closed or self._active is None or serial != self._active[0]:
             return
+        _, token = self._active
+        self._active = None
+        if error:
+            self.injection_failed.emit(token, error)
+        else:
+            self.injection_completed.emit(token)
 
-        if ctrl:
-            self._ui.write(ecodes.EV_KEY, ecodes.KEY_LEFTCTRL, 1)
-            self._ui.syn()
-        if shift:
-            self._ui.write(ecodes.EV_KEY, ecodes.KEY_LEFTSHIFT, 1)
-            self._ui.syn()
-
-        self._ui.write(ecodes.EV_KEY, key_code, 1)
-        self._ui.syn()
-        time.sleep(0.001)
-        self._ui.write(ecodes.EV_KEY, key_code, 0)
-        self._ui.syn()
-
-        if shift:
-            self._ui.write(ecodes.EV_KEY, ecodes.KEY_LEFTSHIFT, 0)
-            self._ui.syn()
-        if ctrl:
-            self._ui.write(ecodes.EV_KEY, ecodes.KEY_LEFTCTRL, 0)
-            self._ui.syn()
-
-    def set_typing_delay(self, delay: int) -> None:
-        """Set typing delay.
-
-        Args:
-            delay: Delay between keystrokes in milliseconds.
-        """
+    def set_typing_delay(self, delay):
         self.typing_delay = delay
 
-    def set_restore_delay(self, delay: int) -> None:
-        """Set the clipboard restore delay in milliseconds.
-
-        Args:
-            delay: Delay before restoring clipboard in milliseconds.
-        """
+    def set_restore_delay(self, delay):
         self.restore_delay = delay
 
-    def cleanup(self) -> None:
-        """Clean up UInput device."""
-        if self._clipboard_restore_timer is not None:
-            self._clipboard_restore_timer.stop()
-            self._clipboard_restore_timer.deleteLater()
-            self._clipboard_restore_timer = None
-        self._terminate_clipboard_process()
-        if self._ui:
-            try:
-                self._ui.close()
-            except Exception:
-                pass
-            self._ui = None
-            self._available = False
+    def cleanup(self):
+        if self._closed:
+            return
+        self._closed = True
+        self._active = None
+        if self._backend is not None:
+            self._backend.cleanup()
 
-    def __del__(self):
-        self.cleanup()
+    def is_cleanup_complete(self) -> bool:
+        """Terminal barrier: poll on Qt thread; never waits or joins a worker."""
+        return self._closed and (
+            self._backend is None or self._backend.is_cleanup_complete())

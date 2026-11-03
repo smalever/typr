@@ -25,7 +25,8 @@ HotkeyManager / TrayIcon
 - `WhisperTranscriber` - OpenAI-compatible HTTP request в `QThread`.
 - `HotkeyManager` - QObject facade с lazy Linux evdev / Windows WH_KEYBOARD_LL backend;
   чтение устройств, native message loop и hotplug scan выполняются в worker.
-- `TextInjector` - Unicode paste через desktop clipboard и virtual keyboard `/dev/uinput`.
+- `TextInjector` - QObject facade с lazy Windows SendInput / Linux uinput backend;
+  асинхронная Unicode-вставка через clipboard.
 - `HistoryManager` - локальная JSON history с ограничением количества записей.
 - `AppConfig` - tolerant JSON loading, backup и atomic persistence пользовательских настроек.
 - `TrayIcon`, `SettingsDialog`, `HistoryDialog` - desktop UI и пользовательские действия;
@@ -54,15 +55,18 @@ Deployment root получается удалением конечного `/v1`
 2. `HotkeyManager` только публикует события записи и не управляет audio/network напрямую.
 3. `AudioRecorder` завершает stream и thread до публикации готового WAV.
 4. Один результат транскрипции либо вставляется и возвращает приложение в `IDLE`, либо переводит его в управляемый `ERROR` с автоматическим recovery.
-5. Clipboard захватывается непосредственно перед paste. Исходное содержимое восстанавливается только если пользователь не заменил вставленный текст новым clipboard content.
+5. Windows оставляет опубликованный текст в clipboard навсегда (как Copy), без clear/restore
+   даже при ошибке/shutdown. Linux сохраняет текстовый backup/restore по сравнению строк;
+   это best effort, не атомарная защита от внешнего копирования.
 6. Unicode-вставка не зависит от активной keyboard layout.
 7. API key хранится только в пользовательском config (Linux: `0600`; Windows:
    проверенный private DACL) и не попадает в history, logs, tests или документацию.
 8. Любая ошибка чтения config/history блокирует последующие записи этого экземпляра;
    диагностические сообщения о parsing errors не содержат прочитанных данных.
 9. UI state является проекцией `AppState`; tray actions не создают параллельный recording/transcription pipeline.
-10. Cleanup останавливает clipboard restore timer и освобождает audio stream, input devices,
-    virtual keyboard и текущий clipboard helper process, включая helper восстановленного clipboard.
+10. Cleanup инвалидирует injection до сохранения config. Linux worker освобождает
+    virtual keyboard и helper (также восстановленного clipboard) в finally без UI join;
+    Windows останавливает timer, не изменяя clipboard.
 11. HTTP transcription использует отдельные connect/read timeouts; локальному GigaSTT
     предоставляется более длинное CPU inference window, а ошибки принимаются как в OpenAI
     object-формате, так и в строковом GigaSTT envelope.
@@ -112,7 +116,67 @@ False и явная ошибка при timeout/известном отказе,
 только запрашивает остановку, без join Qt thread; повтор initialize во время
 завершения возвращает False с ошибкой, после выхода worker возможен чистый restart.
 Эти unit-проверенные границы не означают готовность всего Windows приложения:
-injection/audio/UI этапы 3–4 и desktop smoke еще не выполнены.
+audio/UI этапа 4 и desktop smoke еще не выполнены.
+
+### Text injection boundary
+
+`request_injection(text: str, token: object) -> bool` принимает уникальный caller-generated
+token; `injection_completed(token)` / `injection_failed(token, reason: str)` завершают
+операцию. Token сравнивается по identity, повторное использование запрещено контрактом.
+Bool означает только принятие, не успех. Busy возвращает False и queued failure для
+отклоненного token, не затрагивая active request. После terminal `cleanup()` запросы
+возвращают False без сигналов. Kickoff отложен на Qt event loop; controller устанавливает
+token до request, поэтому корректен даже при синхронном test backend callback.
+Внутренний монотонный serial фильтрует late/duplicate completion. Все public facade
+методы вызываются из main Qt thread, backend result доставляется queued connection.
+Setters меняют только facade, immutable значения delays фиксируются при request.
+
+`TyprApp` сохраняет транскрипцию в history до injection независимо от его результата,
+удерживает `TYPING` до completion/failure, не допускает нового recording pipeline.
+Устаревшие token, поздние transcription/audio и recovery после shutdown игнорируются.
+Quit инвалидирует token и вызывает injection cleanup до config.save; finally гарантирует
+попытки cleanup остальных компонентов даже при ошибке сохранения. Затем app опрашивает
+`TextInjector.is_cleanup_complete() -> bool` через QTimer каждые 10 мс и вызывает
+QApplication.quit ровно один раз только после terminal cleanup. До cleanup метод False;
+Windows/no-backend завершаются немедленно, Linux — только после session.close в finally
+и фактического выхода worker (is_alive=False), включая диагностируемое исключение close.
+Cleanup/quit идемпотентны. Qt event loop остается активным, join и принудительного timeout
+выхода нет: daemon worker не может быть оборван обычным app quit до освобождения ресурсов.
+Audio redesign этим не выполняется.
+
+Windows backend использует QTimer (poll 10 мс, timeout 2 с) для освобождения Ctrl/Shift/
+Alt/Win, включая обе физические стороны, **и клавиши V** (она не modifier).
+Ожидание V исключает synthetic keyup уже удерживаемой V. Timeout не публикует clipboard и не отпускает
+физические клавиши. Clipboard.setText и весь backend lifecycle выполняются в main Qt
+thread. После публикации отправляется Ctrl down, V down/up, Ctrl up через ctypes
+SendInput с явными signatures и полной INPUT union (40 bytes, align 8 на x64).
+Проверяется точный count; partial failure отпускает только synthetic keys, оставшиеся
+down в отправленном prefix, с диагностикой неудачного cleanup. Успех — отправка событий,
+не target acknowledgement. UIPI/elevated target и secure desktop/UAC не обходятся.
+Внешнее копирование между публикацией и paste может изменить вставляемое содержимое;
+race-free paste не обещается, clear/restore отсутствуют во всех ветках.
+
+Linux backend владеет одним последовательным worker: lazy UInput initialization,
+backup, helper stdin, 120 мс ожидания, Shift+Insert, restore deadline и cleanup идут
+вне Qt. Выбор wl-copy/xclip/xsel и строковый backup/restore сохранены; прежний
+typing_delay остается неиспользуемым для clipboard paste. Read/clear bounded 500 мс,
+stdin nonblocking с 1 с deadline, terminate/kill ожидания по 200 мс. Helper, удерживающий
+clipboard, не ожидается через communicate.
+Все clipboard owners остаются foreground: wl-copy --foreground, xclip -quiet,
+xsel --nodetach (upstream man pages: [xclip](https://github.com/astrand/xclip/blob/master/xclip.1),
+[xsel](https://github.com/kfish/xsel/blob/master/xsel.1x)). Popen владеет именно owner,
+не отделившимся launcher; process восстановленного текста также остается под управлением.
+Очистка X11 xclip без backup публикует пустую строку тем же managed foreground helper,
+а не запускает бессрочного owner через subprocess.run. Shutdown закрывает и его.
+Shutdown ставит Event и будит queue; ожидания прерываются, между блокирующими
+шагами проверяется cancellation, начатая
+synthetic последовательность завершается keyup. Cleanup не join UI; системный вызов
+UInput/open/write не обещается принудительно прерываемым: зависший syscall может
+неограниченно задержать выход, но не блокирует Qt и не обходится timeout kill приложения.
+Restore и cleanup errors
+логируются, injection ошибки передаются caller; failed verification не очищает clipboard.
+Preflight is_available на Linux проверяет зависимости/helpers, но реальный отказ открытия
+uinput определяется асинхронной операцией. Settings/i18n clipboard подсказка — этап 4.
 
 ```text
 ~/.config/typr/config.json       settings and API key
