@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
 )
 
 from typr.config import AppConfig
+from typr.platforms.shortcut import parse_shortcut
 from typr.utils.i18n import tr
 from typr.utils.logger import logger
 
@@ -586,7 +587,9 @@ class SettingsDialog(QDialog):
 
         # Hotkeys
         self._ptt_hotkey_edit.setKeySequence(
-            QKeySequence.fromString(self.config.hotkeys.push_to_talk)
+            QKeySequence.fromString(
+                self.config.hotkeys.push_to_talk, QKeySequence.SequenceFormat.PortableText
+            )
         )
         self._cancel_hotkey_edit.setKeySequence(
             QKeySequence.fromString(self.config.hotkeys.cancel_recording)
@@ -612,8 +615,19 @@ class SettingsDialog(QDialog):
         self._prompt_edit.setEnabled(not is_gigastt)
         self._gigastt_options_note.setVisible(is_gigastt)
 
-    def _save_settings(self) -> None:
+    def _save_settings(self) -> bool:
         """Save settings from UI to config."""
+        try:
+            shortcut = parse_shortcut(self._ptt_hotkey_edit.keySequence().toString(
+                QKeySequence.SequenceFormat.PortableText
+            ))
+        except ValueError as exc:
+            QMessageBox.warning(
+                self, tr("app.notify.hotkey_error_title", "Hotkey Error"),
+                tr("settings.hotkeys.invalid", "Invalid or unsupported single-chord hotkey.")
+                + f"\n{exc}",
+            )
+            return False
         # API
         self.config.api_key = self._api_key_edit.text()
         self.config.api_base_url = self._api_base_edit.text() or "http://127.0.0.1:5092/v1"
@@ -631,9 +645,7 @@ class SettingsDialog(QDialog):
         self.config.ui.notification_duration = self._notif_duration_spin.value()
 
         # Hotkeys
-        ptt_seq = self._ptt_hotkey_edit.keySequence()
-        if not ptt_seq.isEmpty():
-            self.config.hotkeys.push_to_talk = ptt_seq.toString()
+        self.config.hotkeys.push_to_talk = shortcut.text
 
         cancel_seq = self._cancel_hotkey_edit.keySequence()
         if not cancel_seq.isEmpty():
@@ -649,17 +661,18 @@ class SettingsDialog(QDialog):
         # Save to file
         self.config.save()
         logger.info("Settings saved")
+        return True
 
     def _apply(self) -> None:
         """Apply settings without closing."""
-        self._save_settings()
-        self.settings_saved.emit()
+        if self._save_settings():
+            self.settings_saved.emit()
 
     def _save_and_close(self) -> None:
         """Save settings and close dialog."""
-        self._save_settings()
-        self.settings_saved.emit()
-        self.accept()
+        if self._save_settings():
+            self.settings_saved.emit()
+            self.accept()
 
     def _toggle_api_key_visibility(self, show: bool) -> None:
         """Toggle API key visibility."""

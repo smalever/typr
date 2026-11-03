@@ -125,6 +125,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         ),
         "settings.hotkeys.group": "Keyboard Shortcuts",
         "settings.hotkeys.ptt": "Push-to-Talk:",
+        "settings.hotkeys.invalid": "Invalid or unsupported single-chord hotkey.",
         "settings.hotkeys.cancel": "Cancel Recording:",
         "settings.hotkeys.info": (
             "Note: Hotkeys are registered directly with your input devices via evdev."
@@ -270,6 +271,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         ),
         "settings.hotkeys.group": "Сочетания клавиш",
         "settings.hotkeys.ptt": "Запись (удержание):",
+        "settings.hotkeys.invalid": "Некорректное или неподдерживаемое одиночное сочетание клавиш.",
         "settings.hotkeys.cancel": "Отмена записи:",
         "settings.hotkeys.info": (
             "Примечание: Горячие клавиши регистрируются в системе напрямую через evdev."

@@ -1,10 +1,16 @@
 """Configuration management for Typr."""
 
 import json
-import os
+import logging
+import stat
+import sys
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
+
+from typr.platforms.paths import atomic_write, config_dir
+
+log = logging.getLogger(__name__)
 
 
 def _coerce(dc_cls, value: Any):
@@ -76,9 +82,9 @@ class AppConfig:
     history: HistoryConfig = field(default_factory=HistoryConfig)
 
     # Config file location
-    CONFIG_DIR: Path = field(default_factory=lambda: Path.home() / ".config" / "typr")
+    CONFIG_DIR: Path = field(default_factory=lambda: config_dir())
     CONFIG_FILE: Path = field(
-        default_factory=lambda: Path.home() / ".config" / "typr" / "config.json"
+        default_factory=lambda: config_dir() / "config.json"
     )
 
     # Set to True if loading partially failed; prevents save() from
@@ -102,22 +108,27 @@ class AppConfig:
         fails entirely, a flag is set to prevent the next save from overwriting
         the existing file.
         """
-        config_file = Path.home() / ".config" / "typr" / "config.json"
-        if not config_file.exists():
-            return cls()
-
+        config_file = config_dir() / "config.json"
         try:
-            with open(config_file) as f:
+            with open(config_file, encoding="utf-8") as f:
                 data = json.load(f)
-        except (OSError, json.JSONDecodeError) as e:
-            print(f"Error loading config (preserving existing file): {e}")
+        except FileNotFoundError:
+            # A dangling link is not a genuinely absent config.
+            if not config_file.is_symlink():
+                return cls()
+            instance = cls()
+            instance._load_failed = True
+            log.error("Dangling config link; preserving existing file: %s", config_file)
+            return instance
+        except (OSError, ValueError, RecursionError) as e:
+            log.error("Cannot read config %s (%s); preserving file", config_file, type(e).__name__)
             instance = cls()
             instance._load_failed = True
             return instance
 
         # Drop non-serializable fields and any keys we don't recognize.
         if not isinstance(data, dict):
-            print("Config file is not an object, preserving existing file")
+            log.error("Config file is not an object; preserving existing file")
             instance = cls()
             instance._load_failed = True
             return instance
@@ -134,10 +145,8 @@ class AppConfig:
     def save(self) -> None:
         """Save config to file with a backup of the previous version."""
         if self._load_failed:
-            print("Config load previously failed; refusing to overwrite existing file")
+            log.error("Config load previously failed; refusing to overwrite existing file")
             return
-
-        self.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
         # Convert to dict, excluding non-serializable fields
         data = self._to_dict()
@@ -145,20 +154,28 @@ class AppConfig:
         data.pop("CONFIG_FILE", None)
 
         # Back up the previous good config before overwriting.
-        if self.CONFIG_FILE.exists():
-            backup = self.CONFIG_FILE.with_suffix(".json.bak")
-            try:
-                backup.write_bytes(self.CONFIG_FILE.read_bytes())
-                os.chmod(backup, 0o600)
-            except OSError as e:
-                print(f"Could not write config backup: {e}")
+        # Validate the destination before reading/copying a secret backup too.
+        from typr.platforms.paths import prepare_private_directory
 
-        # Write atomically via temp file + rename.
-        tmp = self.CONFIG_FILE.with_suffix(".json.tmp")
-        with open(tmp, "w") as f:
-            json.dump(data, f, indent=2)
-        os.chmod(tmp, 0o600)
-        tmp.replace(self.CONFIG_FILE)
+        prepare_private_directory(self.CONFIG_FILE.parent)
+        try:
+            info = self.CONFIG_FILE.lstat()
+            if not stat.S_ISREG(info.st_mode):
+                raise OSError("Config must be a regular file, not a link")
+            if sys.platform == "win32":
+                from typr.platforms.windows_security import check_private_path
+
+                check_private_path(self.CONFIG_FILE)
+            previous = self.CONFIG_FILE.read_bytes()
+        except FileNotFoundError:
+            if self.CONFIG_FILE.is_symlink():
+                raise OSError("Refusing to replace a dangling config link") from None
+        else:
+            atomic_write(self.CONFIG_FILE.with_suffix(".json.bak"), previous)
+
+        atomic_write(
+            self.CONFIG_FILE, json.dumps(data, indent=2, ensure_ascii=True).encode("utf-8")
+        )
 
     def _to_dict(self) -> dict:
         """Convert config to dictionary."""

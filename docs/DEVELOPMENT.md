@@ -6,7 +6,10 @@
 
 ## Окружение
 
-Проект требует Python 3.10+ и использует `hatchling`, PyQt6, PyAudio, httpx и evdev. `install.sh` создает проектное окружение `.venv` и устанавливает package в editable mode вместе с dev-зависимостями, включая `pytest` и `ruff`.
+Проект требует Python 3.10+ и использует `hatchling`, PyQt6, PyAudio, httpx и evdev
+(зависимость evdev ограничена Linux). `install.sh` создает проектное окружение
+`.venv` и устанавливает package в editable mode вместе с dev-зависимостями,
+включая `pytest` и `ruff`. Поддержка Windows runtime еще не завершена.
 
 Для разработки с уже созданным окружением:
 
@@ -14,7 +17,23 @@
 ./.venv/bin/pip install -e '.[dev]'
 ```
 
-Не используй реальные значения из `~/.config/typr/config.json` в tests. Tests, затрагивающие persistence, должны подменять `HOME` временным каталогом до импорта модулей с home-relative constants.
+Не используй реальные значения из пользовательского config в tests.
+`tests/conftest.py` изолирует HOME, USERPROFILE и LOCALAPPDATA временным каталогом
+до импорта test modules (и default logger). Windows shell tests пропускаются до
+чтения scripts. Persistence unit tests отдельно подменяют security boundary;
+`test_windows_acl_on_temporary_directory` использует настоящий read-only Win32
+binding и fake keys только во временном каталоге. При небезопасном окружении
+проверяет отказ без записи и отмечает положительный native gate как xfail.
+
+Targeted stage-1 suite: `python -m pytest -q tests/test_paths.py tests/test_config.py
+tests/test_history.py tests/test_logger.py tests/test_installer.py tests/test_uninstaller.py`.
+Это не проверка GUI, devices, clipboard или готовности всего приложения на Windows.
+
+Targeted stage-2 suite: `python -m pytest -q tests/test_windows_hotkeys.py
+tests/test_hotkey_manager.py`. Win32 API здесь полностью mocked: тесты не ставят
+реальные hooks и не регистрируют session notifications. Linux evdev events/hotplug
+проверяются fake devices; нативный Linux regression остается отдельным gate.
+Для unit suite достаточно QCoreApplication, без запуска GUI.
 
 ## Запуск
 

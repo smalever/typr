@@ -2,7 +2,9 @@
 
 ## Статус и правила исполнения
 
-Это **план будущих изменений**. Поддержка Windows еще **не реализована**. Действующая архитектура описана в [ARCHITECTURE.md](ARCHITECTURE.md), правила документации — в [DOCUMENTATION_POLICY.md](DOCUMENTATION_POLICY.md).
+Этапы 1–2 реализованы (статус и открытые gates ниже); этапы 3–4 остаются **планом будущих
+изменений**. Поддержка Windows приложения еще **не готова**. Действующая архитектура
+описана в [ARCHITECTURE.md](ARCHITECTURE.md), правила документации — в [DOCUMENTATION_POLICY.md](DOCUMENTATION_POLICY.md).
 - Агент выполняет только явно порученный этап; наличие плана не разрешает произвольные изменения системы, запуск GUI или commit.
 - Координатор утверждает архитектуру, контракты и зависимости; исполнитель выбирает локальную реализацию в утвержденных границах.
 - У каждого файла один писатель. Этапы выполняются строго последовательно с приемкой; review — в режиме read-only.
@@ -83,6 +85,37 @@ Non-goals (требуют отдельного решения при необх�
 ## 3. Последовательные этапы реализации
 
 ### Этап 1 — Платформенные границы, пути, persistence и изоляция тестов
+
+**Статус (2026-11-03): реализация завершена; приемка Linux остается открытой.**
+Добавлен узкий read-only `platforms/windows_security.py` для owner/DACL, без
+изменения системных ACL. Уникальные private tmp и backup заменяются атомарно;
+ошибки чтения config/history блокируют последующую запись. Обновлены paths,
+UTF-8, consoleless logger, ранняя изоляция tests и skip shell tests.
+После независимого review исправлены два дефекта: JSON сериализуется с
+`ensure_ascii=True` и явным UTF-8 для безопасного round-trip lone surrogates;
+`RecursionError` при чтении глубоко вложенного JSON переводит config/history
+в `_load_failed` без последующей перезаписи. Четыре regression-теста сначала
+воспроизвели ошибки, затем прошли после исправления (config load/save,
+history load/save/add и сохранность оригиналов при глубине 100000 массивов).
+
+Проверено на Windows x64 / доступном Python 3.15.2: чистый импорт платформенных
+модулей/config/history без evdev; targeted persistence/paths/logger suite
+(`27 passed, 2 skipped`: shell modules skipped до чтения ресурсов);
+нативная проверка DACL временного каталога и отказ вне профиля; scoped ruff;
+sdist и wheel (`build --no-isolation`, без установки приложения).
+Это не gate импорта `typr.app`/GUI: он зависит от следующих этапов.
+Проектная `.venv` оказалась Linux-only с недоступным здесь interpreter, поэтому
+проверки выполнялись отдельным временным Windows venv вне репозитория.
+Toolchain: `C:\Users\smale\AppData\Local\Temp\kilo\typr-stage1-venv\Scripts\python.exe`
+(ruff в том же `Scripts`); повторные targeted pytest, scoped ruff и build
+актуального исправления прошли. Сборки находятся в
+`C:\Users\smale\AppData\Local\Temp\kilo\typr-stage1-dist`.
+
+Открытые gates: Linux persistence/permissions и shell regressions на Linux;
+выбранная релизная minor Python (3.12 / согласованная), чистая установка wheel
+и `pip check` полного приложения. Этапы 3–4, полный applicable pytest обеих ОС
+и все desktop/hardware smoke не выполнялись и не объявляются готовыми.
+
 - Область записи: `pyproject.toml`, `src/typr/platforms/__init__.py`, `src/typr/platforms/paths.py`.
 - Область записи (core): `src/typr/config.py`, `src/typr/core/history.py`, `src/typr/utils/logger.py`.
 - Область записи (tests): `tests/conftest.py`, `tests/test_paths.py`, `tests/test_config.py`, `tests/test_history.py`, `tests/test_installer.py`, `tests/test_uninstaller.py`.
@@ -93,6 +126,56 @@ Non-goals (требуют отдельного решения при необх�
 - Критерии проверки (Gate): чистый импорт без evdev на Windows; прохождение тестов persistence, путей и logger в изолированном окружении.
 
 ### Этап 2 — Windows PTT backend (ctypes WH_KEYBOARD_LL)
+
+**Статус (2026-11-03): реализация и mocked unit gates завершены; desktop и
+нативный Linux regression остаются открытыми.**
+
+Добавлены lazy selector, QObject facade, общий strict single-chord PortableText
+parser и Windows worker с pointer-sized ctypes ABI, native message queue,
+WH_KEYBOARD_LL и скрытым окном WTS session notifications. Start/stop/reset,
+left/right, duplicate down, injected/AltGr и WM_SYSKEYDOWN/UP проверены без
+настоящих hooks/session registration. Update/reset/quit передаются worker
+private messages; Qt relay фильтрует worker registration и shortcut generation. Callback всегда пересылает
+событие дальше, references удерживаются до unhook/выхода потока. Silent hook
+removal detection не обещается. Initialize ожидает readiness максимум 100 мс;
+timeout отменяет startup и возвращает False с ошибкой. Cleanup не делает join;
+restart допускается после фактического завершения предыдущего worker.
+
+Linux evdev read/select/hotplug перенесен в узкий backend без замены механизма
+ввода; update/reset выполняются через worker control queue, закрытие devices —
+в worker finally, без прежнего секундного join UI. Fake evdev тест проверяет
+PTT/repeat/update/reset/hotplug; это не замена нативного Linux gate.
+Settings PTT load/save использует PortableText и общий parser до изменения
+config; invalid input не сохраняется и не закрывает диалог (RU/EN diagnostic).
+Другие UI/audio/injection изменения этапов 3–4 не выполнялись.
+
+Проверено Windows x64 / временный Python 3.15.2 toolchain этапа 1:
+`57 passed, 2 skipped` для новых hotkey tests и полного targeted stage-1 suite
+(paths/config/history/logger/installer/uninstaller; shell modules skipped).
+Scoped ruff всех измененных Python-файлов прошел. `python -m build --no-isolation`
+создал sdist/wheel 0.4.0 в Temp `typr-stage2-dist`, без установки приложения.
+В toolchain добавлен httpx 0.28.1 для no-GUI Settings import/test.
+Из-за WinError32 при scandir корня pytest запущен из Temp с absolute PYTHONPATH,
+`--rootdir=<repo>/tests --confcutdir=<repo>/tests --import-mode=importlib
+-p no:cacheprovider`; Git status/diff в этом окружении заблокированы directory
+access error. Проверки не устанавливают реальный hook и не меняют desktop.
+Открыты все Linux gates этапа 1, нативный evdev regression, Windows desktop smoke,
+релизная minor Python, clean install/pip check и этапы 3–4.
+
+После независимого review исправлены три подтвержденных дефекта: потеря fatal
+GetMessageW error между post и consumption WM_UPDATE, phantom queued события
+предыдущего worker после restart и принятие `Ctrl+Z, ` из-за lossy Qt parser.
+Worker registration теперь отделена от shortcut generation; ошибки текущей
+registration (включая unhook/WTS/window/class cleanup) не фильтруются shortcut
+generation, старые PTT по-прежнему отбрасываются. Новый worker инвалидирует все
+queued события прошлого; initialize живой регистрации остается идемпотентным.
+Два deterministic FakeWin32/QCoreApplication race tests управляют порядком через
+threading.Event/очередь, без sleep/GUI/native registration; также проверены final
+cleanup errors после cleanup generation change, trailing/empty chords и comma
+target как явно unsupported OEM key (не как разделитель). Проверка допустимых
+non-letter keys выявила canonical PortableText `Del`/`Ins`: key map исправлен
+для ранее заявленных Delete/Insert. Scoped ruff и build повторены после правок.
+
 - Область записи: файлы Windows hotkey в `src/typr/platforms/` (например, `windows_hotkeys.py`), селектор платформ, `src/typr/core/hotkey_manager.py`.
 - Область записи (tests): `tests/test_windows_hotkeys.py`, `tests/test_hotkey_manager.py`.
 - Документация: `docs/ARCHITECTURE.md`, этот план.

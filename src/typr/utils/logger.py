@@ -2,7 +2,8 @@
 
 import logging
 import sys
-from pathlib import Path
+
+from typr.platforms.paths import log_dir
 
 
 def setup_logger(name: str = "typr", level: int = logging.INFO) -> logging.Logger:
@@ -14,28 +15,30 @@ def setup_logger(name: str = "typr", level: int = logging.INFO) -> logging.Logge
     if logger.handlers:
         return logger
 
-    # Console handler
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(level)
-    console_format = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%H:%M:%S",
-    )
-    console_handler.setFormatter(console_format)
-    logger.addHandler(console_handler)
-
-    # File handler
-    log_dir = Path.home() / ".config" / "typr" / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / "typr.log"
-
-    file_handler = logging.FileHandler(log_file)
+    # Prepare file first: failure must not leave a partly initialized logger that
+    # silently skips the file on the next call. No cwd/temporary log fallback.
+    try:
+        directory = log_dir()
+        directory.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(directory / "typr.log", encoding="utf-8")
+    except OSError as error:
+        raise OSError(f"Cannot initialize Typr log file: {error}") from error
     file_handler.setLevel(logging.DEBUG)
     file_format = logging.Formatter(
         "%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s"
     )
     file_handler.setFormatter(file_format)
     logger.addHandler(file_handler)
+
+    # pythonw may have neither stdout nor stderr: the UTF-8 file is the sink.
+    stream = sys.stdout if sys.stdout is not None else sys.stderr
+    if stream is not None:
+        console_handler = logging.StreamHandler(stream)
+        console_handler.setLevel(level)
+        console_handler.setFormatter(logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S"
+        ))
+        logger.addHandler(console_handler)
 
     return logger
 

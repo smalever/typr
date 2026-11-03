@@ -3,12 +3,16 @@
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
+if sys.platform == "win32":
+    pytest.skip("Linux shell installer tests", allow_module_level=True)
+
 ROOT = Path(__file__).resolve().parents[1]
-INSTALLER = (ROOT / "install.sh").read_text()
+INSTALLER = (ROOT / "install.sh").read_text(encoding="utf-8")
 FUNCTIONS = INSTALLER.split("DRY_RUN=false", 1)[0]
 
 
@@ -26,7 +30,8 @@ def shell(tmp_path):
 
     def mock(name, body):
         file = binary / name
-        file.write_text(f'#!/bin/bash\nprintf "%s\\n" "{name} $*" >> "$LOG"\n{body}\n')
+        file.write_text(f'#!/bin/bash\nprintf "%s\\n" "{name} $*" >> "$LOG"\n{body}\n',
+                        encoding="utf-8")
         file.chmod(0o755)
 
     mock("id", "printf '1000\\n'")
@@ -37,11 +42,11 @@ def shell(tmp_path):
     def run(code, answers="", main=False):
         if main:
             release = tmp_path / "os-release"
-            release.write_text('ID=debian\nNAME=Debian\n')
+            release.write_text('ID=debian\nNAME=Debian\n', encoding="utf-8")
             code = code.replace("/etc/os-release", str(release))
-        result = subprocess.run(["bash", "-c", code], input=answers, text=True,
+        result = subprocess.run(["bash", "-c", code], input=answers, encoding="utf-8",
                                 capture_output=True, env=env, timeout=10)
-        return result, log.read_text() if log.exists() else ""
+        return result, log.read_text(encoding="utf-8") if log.exists() else ""
 
     return run, mock, home, env
 
@@ -207,7 +212,7 @@ def test_parakeet_health_verification(field, value):
     setup = ("import io, urllib.request\n"
              f"urllib.request.urlopen = lambda *a, **k: io.StringIO({json.dumps(health)!r})\n")
     result = subprocess.run([str(ROOT / ".venv/bin/python"), "-c", setup + code],
-                            capture_output=True, text=True)
+                            capture_output=True, encoding="utf-8")
     assert (result.returncode == 0) is (field is None)
 
 
@@ -275,7 +280,7 @@ def test_module_loading_persistence_preserves_existing(shell, builtin, existing)
     code = code.replace("/usr/lib/modules-load.d", str(home / "absent"))
     code = code.replace("/run/modules-load.d", str(home / "absent"))
     if existing:
-        (home / "other.conf").write_text("# shared setting\nuinput\n")
+        (home / "other.conf").write_text("# shared setting\nuinput\n", encoding="utf-8")
     mock("modinfo", f"printf '{'(builtin)' if builtin else '/lib/modules/uinput.ko'}\\n'")
     mock("sudo", '"$@"')
     mock("modprobe", "exit 0")
@@ -285,9 +290,9 @@ def test_module_loading_persistence_preserves_existing(shell, builtin, existing)
     created = home / "typr-uinput.conf"
     assert created.exists() is (not builtin and not existing)
     if created.exists():
-        assert created.read_text() == "uinput\n"
+        assert created.read_text(encoding="utf-8") == "uinput\n"
     if existing:
-        assert (home / "other.conf").read_text() == "# shared setting\nuinput\n"
+        assert (home / "other.conf").read_text(encoding="utf-8") == "# shared setting\nuinput\n"
 
 
 def test_readiness_success_uses_bounded_health_request(shell):
@@ -397,7 +402,7 @@ def test_context_precedence_and_rootless_preflight(shell):
     meta.mkdir(parents=True)
     (meta / "meta.json").write_text(json.dumps({
         "Name": "rootless", "Endpoints": {"docker": {"Host": "unix:///run/user/1000/docker.sock"}}
-    }))
+    }), encoding="utf-8")
     mock("docker", "exit 0")
     mock("dpkg-query", "exit 1")
     result, log = run(FUNCTIONS + "\nprepare_docker")
@@ -424,10 +429,11 @@ def test_selected_context_from_config_is_used_without_docker(shell):
     run, mock, home, _ = shell
     meta = home / ".docker/contexts/meta/remote"
     meta.mkdir(parents=True)
-    (home / ".docker/config.json").write_text(json.dumps({"currentContext": "remote"}))
+    (home / ".docker/config.json").write_text(json.dumps({"currentContext": "remote"}),
+                                             encoding="utf-8")
     (meta / "meta.json").write_text(json.dumps({
         "Name": "remote", "Endpoints": {"docker": {"Host": "tcp://remote:2376"}}
-    }))
+    }), encoding="utf-8")
     mock("docker", "exit 0")
     result, log = run(FUNCTIONS + "\nprepare_docker")
     assert result.returncode == 1

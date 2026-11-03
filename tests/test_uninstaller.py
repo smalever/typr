@@ -2,12 +2,16 @@
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
+if sys.platform == "win32":
+    pytest.skip("Linux shell uninstaller tests", allow_module_level=True)
+
 ROOT = Path(__file__).resolve().parents[1]
-UNINSTALLER = (ROOT / "uninstall.sh").read_text()
+UNINSTALLER = (ROOT / "uninstall.sh").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("content", ["uinput\n", "uinput", "uinput\n\n",
@@ -16,7 +20,7 @@ UNINSTALLER = (ROOT / "uninstall.sh").read_text()
 def test_module_cleanup_exact_content_and_consent(tmp_path, content, consent):
     module = tmp_path / "typr-uinput.conf"
     if content is not None:
-        module.write_text(content)
+        module.write_text(content, encoding="utf-8")
     log = tmp_path / "commands"
     prefix = UNINSTALLER.split('echo "========================================="', 1)[0]
     cleanup = UNINSTALLER.split("# Clean up udev rules interactively", 1)[1]
@@ -30,14 +34,14 @@ sudo() {
 }
 '''
     result = subprocess.run(["bash", "-c", prefix + mocks + cleanup],
-                            input=consent + "\n", text=True, capture_output=True,
+                            input=consent + "\n", encoding="utf-8", capture_output=True,
                             env=dict(os.environ, HOME=str(tmp_path), LOG=str(log)), timeout=5)
     assert result.returncode == 0, result.stderr
     removed = content == "uinput\n" and consent == "y"
     assert module.exists() is (content is not None and not removed)
     if module.exists():
-        assert module.read_text() == content
-    commands = log.read_text() if log.exists() else ""
+        assert module.read_text(encoding="utf-8") == content
+    commands = log.read_text(encoding="utf-8") if log.exists() else ""
     assert (f"rm -f {module}" in commands) is removed
     if content != "uinput\n" or consent == "n":
         assert not commands
@@ -45,7 +49,7 @@ sudo() {
 
 def test_module_cleanup_preserves_symlink(tmp_path):
     target = tmp_path / "shared.conf"
-    target.write_text("uinput\n")
+    target.write_text("uinput\n", encoding="utf-8")
     module = tmp_path / "typr-uinput.conf"
     module.symlink_to(target)
     block = UNINSTALLER.split("managed_module_entry()", 1)[1].split(
@@ -56,4 +60,4 @@ def test_module_cleanup_preserves_symlink(tmp_path):
                             capture_output=True, timeout=5)
     assert result.returncode != 0
     assert module.is_symlink()
-    assert target.read_text() == "uinput\n"
+    assert target.read_text(encoding="utf-8") == "uinput\n"
