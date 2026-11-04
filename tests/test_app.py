@@ -8,6 +8,7 @@ from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
+from PyQt6 import sip
 from PyQt6.QtCore import QCoreApplication, QEventLoop, QObject, QTimer
 
 from typr.core.text_injector import TextInjector
@@ -42,6 +43,8 @@ def controller():
     app.audio_recorder = Mock()
     app.audio_recorder.is_operation_complete.return_value = True
     app.audio_recorder.is_cleanup_complete.return_value = True
+    app.transcriber = Mock()
+    app.transcriber.is_cleanup_complete.return_value = True
     app.hotkey_manager = Mock()
     yield module, app, core
 
@@ -96,6 +99,7 @@ def test_quit_invalidates_before_failed_save_and_finally_cleans(controller, monk
     app._quit()
     assert order == ["injection cleanup", "save"]
     app.hotkey_manager.cleanup.assert_called_once()
+    app.transcriber.cleanup.assert_called_once()
     quit_app.assert_called_once()
     app._on_injection_completed(token)
     app._on_transcription_complete("late")
@@ -366,4 +370,138 @@ def test_settings_lazy_cleanup_joins_existing_barrier(controller, monkeypatch, c
         quit_app.assert_not_called()
         settings.is_cleanup_complete.return_value = True
         scheduled.pop()()
+    quit_app.assert_called_once()
+
+
+@pytest.mark.parametrize("save_fails", [False, True])
+@pytest.mark.parametrize("fail", [False, True])
+def test_quit_waits_for_transcriber_http_context_actual_exit(
+        controller, monkeypatch, save_fails, fail):
+    import httpx
+
+    from typr.core.transcriber import WhisperTranscriber
+
+    module, app, core = controller
+    entered, release = threading.Event(), threading.Event()
+    closed = threading.Event()
+
+    class Client:
+        def __init__(self, **kwargs):
+            assert threading.get_ident() != threading.main_thread().ident
+
+        def __enter__(self):
+            return self
+
+        def post(self, url, **kwargs):
+            if fail:
+                raise httpx.ReadTimeout("fake timeout")
+            return httpx.Response(200, request=httpx.Request("POST", url), json={"text": "late"})
+
+        def __exit__(self, *args):
+            assert threading.get_ident() != threading.main_thread().ident
+            entered.set()
+            assert release.wait(5)
+            closed.set()
+
+    monkeypatch.setattr("typr.core.transcriber.httpx.Client", Client)
+    app.transcriber = WhisperTranscriber("fake", "https://fake.invalid/v1")
+    app.transcriber.transcription_complete.connect(app._on_transcription_complete)
+    app.transcriber.transcription_error.connect(app._on_error)
+    app.transcriber.transcribe(b"fake wav")
+    worker = app.transcriber._worker
+    if save_fails:
+        app.config.save.side_effect = OSError("mock save failure")
+    quit_app = Mock()
+    monkeypatch.setattr(module.QApplication, "quit", quit_app)
+    try:
+        assert entered.wait(2)
+        app._quit()
+        app._quit()
+        responsive = []
+        QTimer.singleShot(0, lambda: responsive.append(True))
+        core.processEvents()
+        assert responsive == [True]
+        assert app.transcriber._worker is worker
+        native_handle = worker._native_thread
+        assert worker.isRunning()
+        assert not app.transcriber.is_cleanup_complete()
+        quit_app.assert_not_called()
+        app.history.add.assert_not_called()
+        app.text_injector.request_injection.assert_not_called()
+    finally:
+        release.set()
+        loop, timeout, poll = QEventLoop(), QTimer(), QTimer()
+        poll.timeout.connect(lambda: loop.quit() if quit_app.called else None)
+        timeout.setSingleShot(True)
+        timeout.timeout.connect(loop.quit)
+        poll.start(1)
+        timeout.start(2000)
+        loop.exec()
+        poll.stop()
+        timeout.stop()
+    assert closed.is_set()
+    assert app.transcriber.is_cleanup_complete()
+    assert sip.isdeleted(worker) or worker.wait(0)
+    if native_handle is not None:
+        assert native_handle._handle is None
+    app._finish_quit_when_injection_closed()
+    quit_app.assert_called_once()
+    app.config.save.assert_called_once()
+    app.history.add.assert_not_called()
+    app.text_injector.request_injection.assert_not_called()
+
+
+def test_quit_requires_transcriber_independent_completion(controller, monkeypatch):
+    module, app, _ = controller
+    app.transcriber.is_cleanup_complete.return_value = False
+    quit_app, scheduled = Mock(), []
+    monkeypatch.setattr(module.QApplication, "quit", quit_app)
+    monkeypatch.setattr(module.QTimer, "singleShot", lambda ms, cb: scheduled.append(cb))
+    app._quit()
+    app.transcriber.cleanup.assert_called_once()
+    quit_app.assert_not_called()
+    app.transcriber.is_cleanup_complete.return_value = True
+    scheduled.pop()()
+    quit_app.assert_called_once()
+
+
+def test_quit_retains_transcriber_until_native_exit_probe_succeeds(controller, monkeypatch):
+    from typr.core.transcriber import WhisperTranscriber
+
+    module, app, core = controller
+    app.transcriber = WhisperTranscriber("fake")
+    worker = Mock()
+    worker.isRunning.return_value = False
+    worker.wait.return_value = False
+    worker.is_native_exit_complete.side_effect = lambda: worker.wait(0)
+    app.transcriber._worker = worker
+    app.transcriber._outcome = (True, "late")
+    scheduled, outcomes = [], []
+    app.transcriber.transcription_complete.connect(outcomes.append)
+    monkeypatch.setattr(module.QTimer, "singleShot", lambda ms, cb: scheduled.append(cb))
+    quit_app = Mock()
+    monkeypatch.setattr(module.QApplication, "quit", quit_app)
+    app.config.save.side_effect = OSError("mock save failure")
+    app._quit()
+    app.transcriber._reap_worker()
+    assert app.transcriber._worker is worker
+    assert app.transcriber.is_busy()
+    assert not app.transcriber.is_cleanup_complete()
+    worker.wait.assert_called_once_with(0)
+    worker.deleteLater.assert_not_called()
+    quit_app.assert_not_called()
+    # Both independent timer callbacks must remain gated on the native probe.
+    pending, scheduled[:] = scheduled[:], []
+    for callback in pending:
+        callback()
+    quit_app.assert_not_called()
+    worker.deleteLater.assert_not_called()
+    worker.wait.return_value = True
+    pending, scheduled[:] = scheduled[:], []
+    for callback in pending:
+        callback()
+    app._finish_quit_when_injection_closed()
+    assert app.transcriber.is_cleanup_complete()
+    worker.deleteLater.assert_called_once()
+    assert outcomes == []
     quit_app.assert_called_once()

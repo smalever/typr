@@ -384,7 +384,7 @@ class TyprApp(QObject):
             logger.error(f"Shutdown/save failed: {exc}")
         finally:
             settings = getattr(self, "_settings_dialog", None)
-            components = (self.audio_recorder, self.hotkey_manager)
+            components = (self.transcriber, self.audio_recorder, self.hotkey_manager)
             if settings is not None:
                 components += (settings,)
             for component in components:
@@ -395,12 +395,13 @@ class TyprApp(QObject):
             self._finish_quit_when_injection_closed()
 
     def _finish_quit_when_injection_closed(self) -> None:
-        """Keep Qt alive until injection AND audio workers actually exit."""
+        """Keep Qt alive until injection, audio and transcription workers exit."""
         if self._quit_completed:
             return
         settings = getattr(self, "_settings_dialog", None)
         if (not self.text_injector.is_cleanup_complete()
                 or not self.audio_recorder.is_cleanup_complete()
+                or not self.transcriber.is_cleanup_complete()
                 or (settings is not None and not settings.is_cleanup_complete())):
             QTimer.singleShot(10, self._finish_quit_when_injection_closed)
             return

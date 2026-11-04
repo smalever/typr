@@ -2,16 +2,26 @@
 
 ## Статус и правила исполнения
 
-**Текущий статус (2026-11-04): этапы 1–5 реализованы (gates 1–7 PASS); выполнена частичная нативная верификация Windows (desktop smoke), native gate 8 находится в статусе PARTIAL / OPEN.**
+**Текущий статус (2026-11-04): этапы 1–5 реализованы (gates 1–7 PASS); выполнены частичная нативная верификация Windows (desktop smoke и launcher-ворота L/R/T), native gate 8 находится в статусе PARTIAL / OPEN; в production-коде устранен подтвержденный дефект жизненного цикла транскрибера (FLS exit probe / barrier), новый baseline тестов — 280 passed, 2 skipped.**
 По явному разрешению пользователя проведен санкционированный натурный smoke (реальный микрофон, GUI, хуки `WH_KEYBOARD_LL`, SendInput Unicode paste в собственный `QTextEdit` с focus guard) в изолированном профиле без сетевого endpoint на существующем установленном runtime этапа 5 (CPython 3.15.2 x64, wheel 0.4.0, sounddevice 0.5.6, cffi 2.1.1, PyQt6 6.12.0).
 В обычном запуске получен полный PASS (exit 0): реальная нативная запись WAV в памяти (~2 с), регистрация/снятие хуков, зарегистрированный Ctrl+V-зонд не выдал PTT при синтетической вставке (доставка и фильтрация synthetic events непосредственно не наблюдались), успешная вставка в собственное окно и чистый выход всех воркеров.
 В consoleless-запуске (`pythonw.exe`) зафиксирован таймаут ожидания фокуса окна вставки (`fg_own=false, pid_own=false, qtactive/focusOwn/visible=true`, exit 1); точная причина таймаута не установлена (ограничения Windows — возможная причина), injection не запускался (focus guard предотвратил SendInput), остальные компоненты и cleanup прошли штатно; production-дефект не подтвержден.
-Production-код, тесты и зависимости не менялись; подтвержденных production-дефектов нет.
-Базовый набор тестов (**256 passed, 2 skipped**) в этой проверке не перезапускался.
-Результаты этапов 1–4 ниже — **исторические срезы**, включая 232 passed / 2 skipped и прежний blocker PyAudio этапа 4; они не являются sounddevice evidence.
-Blocker packaging/import на 3.15.2 снят этапом 5, но это не полная релизная квалификация minor.
-Поддержка Windows приложения еще **не готова**: сквозная транскрипция с endpoint, физический PTT, раскладки/AltGr, lock/unlock, privacy/unplug recovery, production launcher (`typr-gui.exe`), полная релизная квалификация Python и Linux gates остаются открытыми. Действующая архитектура
-описана в [ARCHITECTURE.md](ARCHITECTURE.md), правила документации — в [DOCUMENTATION_POLICY.md](DOCUMENTATION_POLICY.md).
+На том же СТАРОМ существующем установленном runtime этапа 5 (`typr-gui.exe`, wheel 0.4.0, без нового source fix) нативные ворота лаунчера **L/R/T завершились PASS (exit 0)** через изолированный child-only bootstrap (`PYTHONPATH`/`sitecustomize.py`), настоящий `main`/`start`/`quit`/`_cleanup` и `DETACHED_PROCESS` без перенаправления stdout/stderr (наблюдены `sys.stdout`/`sys.stderr is None` до импорта, во время работы и при выходе; штатный FileHandler изолирован, console handler отсутствует):
+- **L (idle launcher):** штатный старт, трей видим, хук зарегистрирован, изолированный config сохранен, выход по сигналу трея -> чистый выход всех воркеров.
+- **R (recording shutdown):** получен первый реальный непустой `audio_chunk` (`count: 1`) -> штатный quit во время активного `RECORDING` -> фактический выход worker. Это новый gate остановки записи, а не повтор микрофонного baseline.
+- **T (typing timer shutdown):** фиктивное завершение транскрипции -> pending injection принят / таймер бекенда активен -> немедленный штатный quit ДО публикации в буфер и SendInput (`publication_attempts: 0, sendinput_attempts: 0`), без реальной вставки.
+Во всех трех случаях (L, R, T) сетевые попытки, непредвиденные вызовы транскрибера, публикации и SendInput строго равны 0; штатный выход воркеров, хука и Qt cleanup подтверждены. Сценарий вставки в собственное окно (P) осознанно исключен для устранения focus race; таймаут фокуса в consoleless `pythonw.exe` из предыдущего smoke остается историческим результатом, а не production-дефектом. Launcher PASS подтвержден только для ограниченного тестового контура; приемка несконфигурированного продакшен-лаунчера без сдерживания и со сквозным endpoint остается **OPEN**.
+
+Параллельно выявлен и устранен **НОВЫЙ подтвержденный дефект в исходном коде транскрибера** (не противоречит историческому smoke 'no defect', где сетевая транскрипция не вызывалась):
+- Сигнал результата `WhisperTranscriber` испускался до закрытия HTTP-контекста (`httpx.Client`), а `TyprApp` не включал воркер транскрибера в барьер завершения (`_finish_quit_when_injection_closed`).
+- Реальный нативный тест FLS (Fiber Local Storage) на Windows с Qt 6.12.0 опроверг достаточность `wait(0)`: вызов `worker.wait(0)` возвращал `True`, а `worker.isRunning()` — `False`, когда поток ОС все еще исполнял FLS/TLS-коллбеки (нативный `WaitForSingleObject` возвращал `258` / `WAIT_TIMEOUT`).
+- Реализовано исправление: воркер до HTTP открывает собственный `SYNCHRONIZE` thread HANDLE через `OpenThread`; `TranscriberWorker` испускает раздельные worker-сигналы `result`/`error`, фасад удерживает outcome до закрытия клиента и выхода потока; таймер (10 мс) опрашивает OS-хэндл (`WaitForSingleObject == WAIT_OBJECT_0`) перед закрытием хэндла и публикацией наружу; добавлены защита от busy/reentrant, терминальный cleanup с подавлением поздних результатов и включение `self.transcriber.is_cleanup_complete()` в барьер выхода `TyprApp`.
+- Для Linux задокументирован контракт `wait(0)`, но нативная приемка Linux остается **OPEN**. Ошибки `OpenThread` и probe приводят к fail-closed блокировке shutdown; сбой `CloseHandle` логирует утечку без срыва барьера. HTTP payload, endpoint и timeouts не менялись, принудительного kill нет.
+- Актуальный набор тестов исходного кода через существующий изолированный `verify_tests.py` составляет **280 passed, 2 skipped** (Linux installer shell tests), scoped ruff и diff clean. Независимое general-deep review подтвердило отсутствие замечаний (targeted suite: **54 passed за 1.49 с**, включая реальные held FLS тесты обычного пути и cleanup). Предыдущий blocker `WinError 32` при сканировании корня снят запуском pytest из внешнего temp cwd с абсолютными флагами `--rootdir`, `--confcutdir`, `--import-mode=importlib`.
+- **Критическая граница:** установленный wheel этапа 5 НЕ пересобирался после исправления транскрибера, поэтому пакетная и нативная приемка нового fix полного приложения остается **OPEN**; юнит-тесты на `QCoreApplication` с fake HTTP не заменяют реальный endpoint и нативный GUI.
+- Исторические срезы: baseline этапа 4 (**232 passed, 2 skipped**), baseline этапа 5 (**256 passed, 2 skipped**) сохраняются как история и не переписываются.
+- Blocker packaging/import на 3.15.2 снят этапом 5, но это не полная релизная квалификация minor.
+- Поддержка Windows приложения еще **не готова**: сквозная транскрипция с endpoint, физический PTT, раскладки/AltGr, lock/unlock, privacy/unplug recovery, uninstrumented production launcher (`typr-gui.exe`), пересборка wheel под новый код транскрибера, полная релизная квалификация Python и Linux gates остаются открытыми. Действующая архитектура описана в [ARCHITECTURE.md](ARCHITECTURE.md), правила документации — в [DOCUMENTATION_POLICY.md](DOCUMENTATION_POLICY.md).
 - Агент выполняет только явно порученный этап; наличие плана не разрешает произвольные изменения системы, запуск GUI или commit.
 - Координатор утверждает архитектуру, контракты и зависимости; исполнитель выбирает локальную реализацию в утвержденных границах.
 - У каждого файла один писатель. Этапы выполняются строго последовательно с приемкой; review — в режиме read-only.
@@ -571,47 +581,135 @@ $harness = 'C:\Users\smale\AppData\Local\Temp\kilo\typr-stage6-9df3f50e6c8549ed9
 
 *Примечание к consoleless-режиму:* запуск выполнялся через `pythonw.exe` из каталога `Рабочая папка Unicode` с перенаправлением `stdout`/`stderr` в `process-output.log`. Этот запуск **НЕ является** приемкой продакшен-лаунчера `typr-gui.exe` (или `python -m typr`) и **НЕ доказывает** поведение логгера при `sys.stdout is None`.
 
-#### Статус и открытые вопросы
+#### Статус и открытые вопросы первого натурного smoke
 - **Дефекты и изменения:** production-код, тесты репозитория и зависимости не менялись. Подтвержденных production-дефектов нет: точная причина focus timeout в consoleless-запуске не установлена (зафиксированы только диагностические флаги `fg_own=false, pid_own=false, qtactive=true, focusOwn=true, visible=true`), ограничения активации Windows рассматриваются как возможная причина; injection не запускался (SendInput предотвращен focus guard), дефект в `TextInjector` или `Win32Input` не подтвержден.
 - **Baseline:** базовый набор тестов (**256 passed, 2 skipped**) в этой проверке не перезапускался.
 - **Статус ворот:** Native Gate 8 находится в статусе **PARTIAL / OPEN**.
 - **Поддержка Windows приложения НЕ готова.**
-- **Открытые ворота и непроверенные сценарии:**
-  1. Сквозная транскрипция с реальным endpoint и обработка сетевых/API ошибок;
-  2. Физический PTT (реальные нажатия пользователем на клавиатуре, удержание, release);
-  3. Физические раскладки клавиатуры и AltGr;
-  4. Session reset, lock / unlock рабочих станций Windows;
-  5. Device privacy toggles в настройках Windows 11;
-  6. Hotplug / unplug recovery аудиоустройств;
-  7. Завершение работы приложения во время активных фаз recording / transcribing / typing;
-  8. Квалификация продакшен-лаунчера `typr-gui.exe`;
-  9. Полная релизная квалификация Python minor;
-  10. Полный нативный регресс Linux (evdev, uinput, clipboard, installer scripts).
+
+### Натурные launcher-ворота L/R/T и устранение дефекта транскрибера (2026-11-04)
+
+По явному разрешению пользователя продолжены открытые gates натурной верификации Windows.
+
+#### 1. Натурные launcher-ворота L/R/T на старом установленном runtime этапа 5
+Проверка проведена на существующем установленном бинарнике `typr-gui.exe` этапа 5:
+`C:\Users\smale\AppData\Local\Temp\kilo\typr-stage5-verify-30225342fbd746ee88fbf361606abdc2\runtime\Scripts\typr-gui.exe` (CPython 3.15.2 x64, установленный wheel `typr==0.4.0`, `sounddevice==0.5.6`, `cffi==2.1.1`, `PyQt6==6.12.0`). **Важно:** проверка выполнялась на СТАРОМ установленном runtime, а НЕ на новом коде транскрибера.
+
+- **Механизм запуска и изоляции (contained scope):**
+  - Запуск через внешний оркестратор `gate.py` с флагом `creationflags: DETACHED_PROCESS` без перенаправления и присвоения дескрипторов `stdout`/`stderr`.
+  - Child-only bootstrap: изоляция подключается через `PYTHONPATH` дочернего процесса (`bootstrap/sitecustomize.py`, `bootstrap/native_gate_probe.py`), который перехватывает окружение до создания `QApplication` и импорта приложения.
+  - Наблюдение консольных потоков: `sys.stdout is None` и `sys.stderr is None` зафиксированы на всех стадиях: до импортов (`stdout_none_early`, `stderr_none_early`), во время работы GUI (`stdout_none_running`, `stderr_none_running`) и при выходе (`streams_still_none`).
+   - Логирование: штатный логгер без подмен использует `FileHandler` строго в изолированном профиле (`native_logger_file_only: true`), консольные хэндлеры отсутствуют.
+  - Изоляция окружения: `HOME`, `USERPROFILE`, `LOCALAPPDATA`, `APPDATA` направлены в `<run>\profile`; `TMP`, `TEMP` — в `<run>\tmp`; рабочий каталог (`cwd`) — `<run>\Рабочая папка Unicode`. Секреты и пользовательские файлы не читались.
+  - Аудит-хук сети: процессный `sys.addaudithook` блокирует известные сокетные функции Python (`socket.connect`, `socket.bind`, `socket.getaddrinfo`, `socket.sendto`, и т.д.); это защита на уровне Python runtime, а не сетевой экран операционной системы.
+  - Жизненный цикл: исполняется настоящий продакшен-код (`main()`, `start()`, `quit()`, `_finish_quit_when_injection_closed()`, `finally`-очистка в entrypoint).
+
+- **Проверенные кейсы и результаты (все три PASS, exit 0):**
+  - **Case L (Idle launcher):** штатный запуск `typr-gui.exe`, видимый трей, регистрация глобального хука `Ctrl+Alt+Z`, пустой API key, отключенная история, изолированный конфиг сохранен; штатный запрос на выход через сигнал иконки трея (`quit_requested_via_tray_signal: true`) -> штатный вход и выход из cleanup в entrypoint -> чистый выход всех воркеров (`audio_actual_exit`, `hook_actual_exit`, `injection_cleanup_complete`). Аудио-чанки не генерировались (`audio_chunk_count: 0`).
+  - **Case R (Recording shutdown gate):** штатный запрос на старт записи принят; с реального микрофона получен первый непустой аудио-чанк (`real_audio_chunk_nonempty: true`, `audio_chunk_count: 1`); в момент активной записи (`RECORDING`) запрошен выход через сигнал трея (`recording_active_at_quit: true`, `controller_recording_at_quit: true`) -> штатный барьер завершения дождался фактической остановки потока записи (`audio_actual_exit: true`) и деинициализации подсистемы sounddevice/PortAudio. Это новый gate остановки записи при активном потоке, а не повторение микрофонного baseline.
+  - **Case T (Typing timer shutdown gate):** симуляция фиктивного завершения транскрипции (fake fixed completion) -> запрос на вставку принят контроллером (`injection_request_accepted: true`), приложение перешло в `TYPING`, запущен таймер ожидания отпускания клавиш вставки в бекенде (`backend_request_pending: true`); в момент активного таймера до истечения задержки инициирован выход через трей (`controller_typing_at_quit: true`) -> операция ожидания отменена (`pending_backend_cancelled: true`), выход произошел строго ДО публикации в буфер обмена и ДО отправки `SendInput` (`publication_attempts: 0`, `sendinput_attempts: 0`), без реальной вставки (`no_injection_callback: true`).
+
+- **Сводные показатели L/R/T:**
+  - Сетевые попытки: `network_attempts: 0`;
+  - Непредвиденные вызовы транскрибера: `unexpected_transcribe: 0`;
+  - Попытки публикации в буфер: `publication_attempts: 0`;
+  - Попытки вызова SendInput: `sendinput_attempts: 0`;
+  - Ошибки: `errors: []`;
+  - Освобождение ресурсов: нативный GUI, микрофон и хуки корректно освобождены (`all workers actual exit: true`).
+   - Исключение сценария P (Paste target focus): сценарий передачи фокуса в собственное окно `QTextEdit` исключен из-за остаточного риска гонки фокуса в Windows. Причина таймаута фокуса в предыдущем consoleless smoke не установлена; production-дефект не подтвержден.
+
+- **Артефакты проверки:**
+  - Каталог: `C:\Users\smale\AppData\Local\Temp\kilo\typr-lrt-20261104-0755`;
+  - Файлы: `gate.py`, `bootstrap\sitecustomize.py`, `bootstrap\native_gate_probe.py`, `static.json`;
+  - Прогоны: `run-L-95dbd8992dde4e15a5f83fb9bd8288c2` (L, PASS), `run-R-6c7a9b3560314d5f90ff122ef627e863` (R, PASS), `run-T-c061ca4adc63416e83b8a54c629d05a0` (T, PASS);
+  - Манифесты и результаты проверены родительским процессом (parent read).
+  - Команды: `& $python -I -B gate.py` (статический preflight PE, entrypoints, AST, audit hook self-check) и `& $python -I -B gate.py --case <L|R|T>`.
+  - Граница применимости: Launcher PASS относится исключительно к ограниченному тестовому контуру (contained / instrumented bootstrap). Приемка несконфигурированного продакшен-лаунчера `typr-gui.exe` со сквозным вызовом реального endpoint остается **OPEN**.
+
+#### 2. Выявление дефекта и исправление жизненного цикла транскрибера (FLS exit probe & barrier)
+- **Подтвержденный дефект в исходном коде:**
+  - `WhisperTranscriber` испускал сигнал результата транскрипции до закрытия контекста HTTP-клиента (`httpx.Client.close()`);
+  - `TyprApp` не включал воркер транскрибера в барьер выхода (`_finish_quit_when_injection_closed` проверял `text_injector`, `audio_recorder`, `settings_dialog`, но не `transcriber`).
+  - Данный факт не противоречит историческому smoke "дефектов нет", так как в натурном smoke транскрипция была отключена (`SMOKE_TRANSCRIPTION_DISABLED`).
+- **Опровержение достаточности `wait(0)` на Windows (Qt 6.12.0):**
+  - Экспериментальный тест на Windows 11 с Qt 6.12.0 показал, что после завершения метода `run()` вызов `QThread.wait(0)` возвращает `True`, а `QThread.isRunning()` — `False`, тогда как поток ОС все еще выполняет деструкторы и коллбеки FLS (Fiber Local Storage) / TLS.
+  - Проверка собственного нативного хэндла потока: `WaitForSingleObject(handle, 0)` возвращает `258` (`WAIT_TIMEOUT`).
+- **Реализованное архитектурное решение:**
+  - Модуль `src/typr/platforms/windows_thread.py`: обертки Win32 API (`OpenThread`, `WaitForSingleObject`, `CloseHandle`) с правами `SYNCHRONIZE`.
+   - `TranscriberWorker`: до HTTP-запроса открывает собственный нативный хэндл через `OpenThread(SYNCHRONIZE, False, GetCurrentThreadId())`. Данные передаются отдельными worker-сигналами `result(str)` и `error(str)`; стандартный `QThread.finished` сохранен для уведомления о завершении Qt-потока.
+   - Фасад `WhisperTranscriber`: перехватывает сигналы воркера в queued slots, но удерживает результат до полного нативного выхода потока и закрытия `httpx.Client`. После получения `QThread.finished` фасад проверяет `worker.wait(0)` и нативный хэндл (`WaitForSingleObject(handle, 0) == WAIT_OBJECT_0`), повторяя неподтвержденную проверку через таймер (10 мс). Только после подтверждения ядром ОС хэндл закрывается, ссылка на воркер освобождается, вызывается `deleteLater()` и публикуется публичный сигнал `transcription_complete` или `transcription_error`.
+  - Reentrant & Busy: reentrant completion может сразу запустить новую транскрипцию без взаимного наложения или потери нового воркера; устаревшие события отбрасываются по identity отправителя.
+  - Терминальный `cleanup()`: идемпотентный метод запрещает новые задачи, подавляет поздние результаты, не блокирует Qt thread и не делает force kill; текущий HTTP-запрос завершается естественным путем по тайм-аутам, после чего воркер закрывает transport. `is_cleanup_complete()` возвращает `True` только после фактического выхода воркера.
+  - Барьер выхода в `TyprApp`: предикат `self.transcriber.is_cleanup_complete()` добавлен в `_finish_quit_when_injection_closed()` и вызов cleanup в блоке `finally` shutdown.
+  - Linux: задокументирован контракт `wait(0)`, нативная верификация Linux остается **OPEN**.
+  - Fail-closed обработка ошибок:
+    - Сбой `OpenThread` отменяет HTTP-запрос до старта и логируется; воркер удерживается, shutdown блокируется с диагностикой `Shutdown blocked: native thread exit unverified` (без ложного pass).
+    - Сбой таймера зонда диагностируется с подавлением дубликатов, повторные попытки продолжаются.
+    - Сбой `CloseHandle` после подтвержденного выхода логируется как утечка ресурсов, но не срывает барьер выхода (выход потока уже доказан).
+  - Неизменность сетевых параметров: HTTP payload, endpoint, timeouts и отсутствие принудительного обрыва запроса сохранены; естественный timeout может задерживать shutdown приложения без фиксированного общего дедлайна.
+- **Измененные файлы:**
+  - `src/typr/app.py`, `src/typr/core/transcriber.py`, `src/typr/platforms/windows_thread.py` (новый), `tests/test_app.py`, `tests/test_transcriber.py`, `tests/test_windows_thread.py` (новый), `docs/ARCHITECTURE.md`.
+- **Результаты тестов и проверок:**
+   - Полный набор тестов исходного кода через изолированный `verify_tests.py`: **280 passed, 2 skipped** (Linux installer shell tests; повторный прогон 2.59 с), новый baseline по сравнению с 256 passed этапа 5 и 232 passed этапа 4.
+  - Scoped ruff: все файлы проверены, замечаний нет (`All checks passed!`).
+  - `git diff --check`: чисто.
+  - Независимое general-deep review: замечаний нет; targeted suite: **54 passed за 1.49 с** (включая реальные held FLS тесты нормального выхода и cleanup).
+  - Снятие блокера `WinError 32`: сканирование корня репозитория обойдено запуском из внешней временной папки с абсолютными флагами `--rootdir`, `--confcutdir`, `--import-mode=importlib`.
+- **Граница готовности пакета:**
+  - Сборка wheel и чистая установка приложения этапа 5 НЕ пересобирались после внесения изменений в транскрибер. Пакетная и нативная проверка полного приложения с новым кодом транскрибера остается **OPEN**. Юнит-тесты на `QCoreApplication` с моками не заменяют сквозную транскрипцию с реальным endpoint и видимым GUI.
 
 ## 4. Чеклист верификации и критерий готовности
 
 ### 4.1. Автоматизированные проверки
 - **PASS на Windows CPython 3.15.2 x64:** isolated sdist/wheel, full binary download, clean full install и pip check без `--no-deps`/stubs; gates 1–5 этапа 5.
 - **PASS:** installed imports из Unicode+spaces cwd с изолированным профилем и удаленным PYTHONPATH, без audio module/native init; gates 6–7.
-- **PASS на Windows:** полный applicable pytest 256 passed / 2 skipped и scoped ruff (не перезапускался в этой проверке). **OPEN на Linux:** полный suite и native regressions; Git Bash syntax check их не заменяет.
+- **PASS на Windows:** полный applicable pytest актуального исходного кода **280 passed, 2 skipped** и scoped ruff (новый baseline; исторические срезы: 256 passed этапа 5, 232 passed этапа 4); targeted suite **54 passed** за 1.49 с (включая реальные FLS-пробы транскрибера).
+- **OPEN:** пересборка wheel и чистая установка пакета с новым исходным кодом транскрибера и FLS-зонда.
+- **OPEN на Linux:** полный suite и native regressions; Git Bash syntax check их не заменяет.
 
 ### 4.2. Натурный Smoke Checklist (требует отдельного разрешения)
-- **PARTIAL PASS на Windows 11 (натурный smoke ContainedApp в обычном режиме, exit 0):** видимый GUI Qt/tray/settings/history из Unicode+spaces cwd; нативная запись с реального микрофона в память (~2 с WAV PCM 16-bit 16k mono); регистрация/снятие хуков `WH_KEYBOARD_LL`; зарегистрированный Ctrl+V-зонд не выдал PTT при синтетической вставке (доставка synthetic events в callback и их фильтрация непосредственно не наблюдались); вставка Unicode через SendInput в собственное окно `QTextEdit` с focus guard; сохранение текста в буфере обмена; чистый выход всех воркеров.
-- **FAIL на Windows 11 в consoleless-режиме (harness pythonw.exe, exit 1):** таймаут фокуса окна вставки (`fg_own=false, pid_own=false, qtactive/focusOwn/visible=true`), точная причина не установлена (ограничения Windows — возможная причина); injection не запускался (SendInput заблокирован focus guard); production-дефект не подтвержден; остальные проверки и cleanup воркеров — PASS. Не является квалификацией `typr-gui.exe`.
-- **OPEN на Windows 11:** старт `typr-gui` без консоли из cwd с Unicode/пробелами в пути как полноценного приложения; физический PTT (нажатие, удержание, release); игнор duplicate down на физических клавишах; поведение lock/unlock, RU/EN раскладок, AltGr; release модификаторов в реальных условиях; вставка в сторонние приложения; сквозная транскрипция с реальным endpoint; hotplug/unplug recovery аудиоустройств; завершение во время active recording/transcribing/typing.
-- **OPEN на Linux:** базовый нативный регресс Wayland и X11 (PTT через evdev, uinput вставка, восстановление через wl-copy/xclip, shell tests).
+- **Contained PASS (натурные проверки в ограниченном/инструментированном контуре):**
+  - **Натурный smoke ContainedApp в обычном режиме (exit 0):** видимый GUI Qt/tray/settings/history из Unicode+spaces cwd; нативная запись с реального микрофона в память (~2 с WAV PCM 16-bit 16k mono); регистрация/снятие хуков `WH_KEYBOARD_LL`; зарегистрированный Ctrl+V-зонд не выдал PTT при синтетической вставке (доставка synthetic events в callback и их фильтрация непосредственно не наблюдались); вставка Unicode через SendInput в собственное окно `QTextEdit` с focus guard; сохранение текста в буфере обмена; чистый выход всех воркеров.
+  - **Натурные launcher-ворота L/R/T (typr-gui.exe на старом runtime этапа 5, exit 0):**
+    - Case L (idle launcher): запуск без консоли (DETACHED_PROCESS), `sys.stdout`/`sys.stderr is None`, FileHandler only, выход по сигналу трея, чистый выход воркеров;
+    - Case R (recording shutdown): получение первого реального непустого `audio_chunk` (`count: 1`) с микрофона, штатный выход в активном состоянии `RECORDING`, фактическая остановка потока записи и освобождение PortAudio;
+    - Case T (typing timer shutdown): фиктивное завершение транскрипции, переход в `TYPING`, активный таймер ожидания отпускания клавиш, отмена операции и выход строго ДО публикации в буфер и SendInput;
+    - Во всех кейсах: 0 попыток сети, непредвиденной транскрипции, публикации и SendInput; GUI, микрофон и хуки корректно освобождены.
+- **Contained FAIL / historical diagnostic:**
+  - **Натурный smoke ContainedApp в consoleless-режиме (harness pythonw.exe, exit 1):** таймаут фокуса окна вставки `FocusGuard` (`fg_own=false, pid_own=false, qtactive/focusOwn/visible=true`), точная причина не установлена (ограничения активации Windows — вероятная причина); SendInput предотвращен focus guard; production-дефект не подтвержден; остальные проверки и cleanup воркеров — PASS. Не является квалификацией `typr-gui.exe`. В проверках L/R/T сценарий P исключен для устранения focus race.
+- **OPEN (release / uninstrumented / full):**
+  - Старт и работа `typr-gui.exe` без консоли из cwd с Unicode/пробелами в пути как полноценного приложения без инструментального сдерживания (uninstrumented);
+  - Пересборка wheel и чистая установка приложения с новым кодом транскрибера и FLS-зонда;
+  - Сквозная транскрипция с реальным endpoint и обработка сетевых/API ошибок;
+  - Физический PTT (реальные нажатия пользователем на клавиатуре, удержание, release);
+  - Физические раскладки клавиатуры (RU/EN) и AltGr;
+  - Игнорирование duplicate down на физических клавишах;
+  - Освобождение модификаторов в реальных пользовательских условиях;
+  - Вставка в сторонние приложения (ввод в privileged/elevated окна и Secure Desktop/UAC является неподдерживаемым non-goal по разделу 2.3);
+  - Session reset, lock / unlock рабочих станций Windows;
+  - Device privacy toggles в настройках Windows 11;
+  - Hotplug / unplug recovery аудиоустройств;
+  - Завершение работы приложения во время активной транскрипции с реальным сетевым запросом;
+  - Базовый нативный регресс Linux (Wayland и X11: PTT через evdev, uinput вставка, восстановление через wl-copy/xclip, shell tests).
 
 ### 4.3. Критерий готовности и открытые ворота
 - Поддержка принимается только если согласованные contracts реализованы, applicable automation и desktop smoke пройдены на обеих ОС без прав admin.
 - Пользовательские данные и секреты сохранены, UI остается отзывчивым, непроверенное честно указано в отчете.
 - Hardware/GUI проверки требуют отдельного разрешения, тестового endpoint и фиктивных секретов.
-- Этап 5 и post-stage 5 smoke: gates **1–7 PASS**, gate **8 PARTIAL / OPEN**. Packaging/import для существующего
-  Python 3.15.2 подтверждены; частичный натурный smoke выполнен; полная native/release qualification minor открыта.
-- Поддержка Windows приложения все еще **НЕ готова**.
-- Открыты на Linux: полный applicable suite, installer shell checks, native audio, evdev, uinput, Wayland/X11 clipboard regressions.
-- Открыты на Windows: физические low-level keyboard hooks, session reset/lock/unlock, ввод в сторонние приложения, clipboard policy со сторонними приложениями (ввод в privileged/elevated окна и Secure Desktop/UAC является неподдерживаемым non-goal по разделу 2.3).
-- Открыты на Windows: audio devices privacy/hotplug/unplug recovery и shutdown во время активных операций с реальными устройствами.
-- Открыты на Windows: продакшен-лаунчер `typr-gui.exe`, сквозная транскрипция с тестовым endpoint.
+- Этап 5 и post-stage 5 проверки: gates **1–7 PASS**, gate **8 PARTIAL / OPEN**. Packaging/import для существующего Python 3.15.2 подтверждены; частичный натурный smoke и launcher-ворота L/R/T выполнены в ограниченном контуре; полная native/release qualification minor открыта.
+- **Поддержка Windows приложения все еще НЕ готова.**
+- **Полный перечень открытых ворот и непроверенных сценариев:**
+  1. Сквозная транскрипция с реальным endpoint и обработка сетевых/API ошибок;
+  2. Физический PTT (реальные нажатия пользователем на клавиатуре, удержание, release);
+  3. Физические раскладки клавиатуры и AltGr;
+  4. Session reset, lock / unlock рабочих станций Windows;
+  5. Device privacy toggles в настройках Windows 11;
+  6. Hotplug / unplug recovery аудиоустройств;
+  7. Завершение работы приложения во время активной фазы транскрипции с реальным HTTP-запросом;
+  8. Квалификация продакшен-лаунчера `typr-gui.exe` без инструментального bootstrap и сдерживания;
+  9. Пересборка wheel и чистая установка приложения с новым кодом транскрибера и FLS-зонда;
+  10. Полная релизная квалификация Python minor;
+  11. Полный нативный регресс Linux (evdev, uinput, clipboard, installer shell checks).
 - Действуют строгие ограничения: запрещена установка новых версий Python без согласования, запрещены несанкционированные GUI и hardware тесты, запрещены git commit и git push.
 
 ## 5. Отложенные задачи (Deferred)

@@ -1,7 +1,9 @@
 """OpenAI Whisper API transcription."""
 
+import sys
+
 import httpx
-from PyQt6.QtCore import QObject, QThread, pyqtSignal
+from PyQt6.QtCore import QObject, Qt, QThread, QTimer, pyqtSignal, pyqtSlot
 
 from typr.utils.logger import logger
 
@@ -42,7 +44,7 @@ def _api_error_message(response: httpx.Response, fallback: str) -> str:
 class TranscriberWorker(QThread):
     """Worker thread for async API calls."""
 
-    finished = pyqtSignal(str)
+    result = pyqtSignal(str)
     error = pyqtSignal(str)
 
     def __init__(
@@ -61,10 +63,21 @@ class TranscriberWorker(QThread):
         self.model = model
         self.language = language
         self.prompt = prompt
+        self._native_thread = None
+        self._native_error: str | None = None
+        self._native_diagnostic: str | None = None
 
     def run(self) -> None:
         """Execute the API request."""
         try:
+            if sys.platform == "win32":
+                from typr.platforms.windows_thread import ThreadHandle
+
+                try:
+                    self._native_thread = ThreadHandle()
+                except OSError as exc:
+                    self._native_error = str(exc)
+                    raise
             with httpx.Client(timeout=_request_timeout(self.api_base_url, self.model)) as client:
                 files = {"file": ("audio.wav", self.audio_data, "audio/wav")}
                 data = {"model": self.model}
@@ -88,7 +101,7 @@ class TranscriberWorker(QThread):
                 result = response.json()
                 text = result.get("text", "")
                 logger.info(f"Transcription complete: {len(text)} chars")
-                self.finished.emit(text)
+                self.result.emit(text)
 
         except httpx.HTTPStatusError as e:
             error_msg = f"API error: {e.response.status_code}"
@@ -108,6 +121,31 @@ class TranscriberWorker(QThread):
             logger.error(error_msg)
             self.error.emit(error_msg)
 
+    def is_native_exit_complete(self) -> bool:
+        """Nonblocking native proof; retain ownership on unverified exit."""
+        if not self.wait(0):
+            return False
+        if sys.platform != "win32":
+            return True
+        try:
+            if self._native_error is not None:
+                raise OSError(self._native_error)
+            if self._native_thread is None:
+                raise OSError("Native thread handle missing")
+            if not self._native_thread.is_exited():
+                return False
+        except OSError as exc:
+            diagnostic = str(exc)
+            if diagnostic != self._native_diagnostic:
+                logger.error(f"Shutdown blocked: native thread exit unverified: {diagnostic}")
+                self._native_diagnostic = diagnostic
+            return False
+        try:
+            self._native_thread.close()
+        except OSError as exc:
+            # Exit is proven; a leaked handle must not be misreported as a live thread.
+            logger.error(f"Native thread exited but handle cleanup failed: {exc}")
+        return True
 
 class WhisperTranscriber(QObject):
     """Transcribes audio using OpenAI Whisper API."""
@@ -131,6 +169,8 @@ class WhisperTranscriber(QObject):
         self.language: str | None = None
         self.prompt: str = ""
         self._worker: TranscriberWorker | None = None
+        self._closing = False
+        self._outcome: tuple[bool, str] | None = None
 
     def transcribe(self, audio_data: bytes) -> None:
         """Start transcription in background thread.
@@ -138,13 +178,13 @@ class WhisperTranscriber(QObject):
         Args:
             audio_data: WAV-formatted audio data.
         """
+        if self._closing or self._worker is not None:
+            return
         if not audio_data:
             self.transcription_error.emit("No audio data to transcribe")
             return
 
         logger.info(f"Starting transcription, {len(audio_data)} bytes")
-        self.transcription_started.emit()
-
         self._worker = TranscriberWorker(
             api_key=self.api_key,
             api_base_url=self.api_base_url,
@@ -153,25 +193,56 @@ class WhisperTranscriber(QObject):
             language=self.language,
             prompt=self.prompt,
         )
-        self._worker.finished.connect(self._on_finished)
-        self._worker.error.connect(self._on_error)
+        self._outcome = None
+        self._worker.result.connect(self._on_result, Qt.ConnectionType.QueuedConnection)
+        self._worker.error.connect(self._on_error, Qt.ConnectionType.QueuedConnection)
+        self._worker.finished.connect(self._on_worker_exited, Qt.ConnectionType.QueuedConnection)
         self._worker.start()
+        self.transcription_started.emit()
 
-    def _on_finished(self, text: str) -> None:
-        """Handle successful transcription."""
-        self.transcription_complete.emit(text)
-        self._cleanup_worker()
+    @pyqtSlot(str)
+    def _on_result(self, text: str) -> None:
+        """Stage the result; the HTTP context and thread may still be alive."""
+        if not self._closing and self.sender() is self._worker:
+            self._outcome = (True, text)
 
+    @pyqtSlot(str)
     def _on_error(self, error: str) -> None:
-        """Handle transcription error."""
-        self.transcription_error.emit(error)
-        self._cleanup_worker()
+        if not self._closing and self.sender() is self._worker:
+            self._outcome = (False, error)
 
-    def _cleanup_worker(self) -> None:
-        """Clean up worker thread."""
-        if self._worker:
-            self._worker.deleteLater()
-            self._worker = None
+    @pyqtSlot()
+    def _on_worker_exited(self) -> None:
+        if self.sender() is self._worker:
+            self._reap_worker()
+
+    def _reap_worker(self) -> None:
+        """Release ownership only after actual exit, before reentrant callbacks."""
+        worker = self._worker
+        if worker is None:
+            return
+        if not worker.is_native_exit_complete():
+            QTimer.singleShot(10, self._reap_worker)
+            return
+        outcome = self._outcome
+        self._outcome = None
+        self._worker = None
+        worker.deleteLater()
+        if not self._closing and outcome is not None:
+            success, message = outcome
+            if success:
+                self.transcription_complete.emit(message)
+            else:
+                self.transcription_error.emit(message)
+
+    def cleanup(self) -> None:
+        """Terminal, nonblocking cancellation of delivery, not of synchronous HTTP."""
+        self._closing = True
+        self._outcome = None
+
+    def is_cleanup_complete(self) -> bool:
+        """Qt must keep running until the worker's native exit has been relayed."""
+        return self._closing and self._worker is None
 
     def update_settings(
         self,
@@ -195,4 +266,4 @@ class WhisperTranscriber(QObject):
 
     def is_busy(self) -> bool:
         """Check if transcription is in progress."""
-        return self._worker is not None and self._worker.isRunning()
+        return self._worker is not None

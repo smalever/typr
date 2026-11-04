@@ -143,10 +143,49 @@ Windows/no-backend завершаются немедленно, Linux — тол
 и фактического выхода worker (is_alive=False), включая диагностируемое исключение close.
 Cleanup/quit идемпотентны. Qt event loop остается активным, join и принудительного timeout
 выхода нет: daemon worker не может быть оборван обычным app quit до освобождения ресурсов.
-Barrier также ждёт actual exit основного AudioRecorder и временных recorder Settings
+Barrier также ждёт actual exit WhisperTranscriber, основного AudioRecorder и временных recorder Settings
 (если lazy dialog был создан). Entry point вызывает controller quit в finally после
 start/exec, включая исключения, и обрабатывает Qt events до завершения того же barrier.
 Отдельного timeout/join или обходного quit нет.
+
+### Transcription lifecycle
+
+`WhisperTranscriber` принимает public calls в main Qt thread и удерживает не более одного
+worker до actual QThread exit. Busy-запросы игнорируются, не заменяя active worker.
+Отдельные `result(str)` / `error(str)` worker доставляются queued slots facade;
+native `QThread.finished` не используется как сигнал текста. Facade удерживает outcome
+до полного native выхода worker и закрытия worker-owned `httpx.Client`, затем освобождает reference
+и вызывает `deleteLater` до публикации public completion/error. Поэтому reentrant
+completion может запустить следующую транскрипцию без overlap или потери нового worker.
+Identity sender отбрасывает устаревшие события.
+
+`QThread.finished` запускает проверку выхода, но сам по себе (как и `isRunning=False`)
+не доказывает завершения TLS/FLS finalizers. Facade сначала проверяет `worker.wait(0)`
+с нулевым timeout. Linux использует documented Qt wait contract; native Linux acceptance
+остаётся OPEN. На Windows Qt 6.12 даже успешный wait наблюдался внутри удерживаемого FLS
+callback, поэтому требуется дополнительный OS probe. Worker до HTTP открывает собственный
+real thread HANDLE через OpenThread(SYNCHRONIZE, GetCurrentThreadId); main thread после
+Qt finished/wait проверяет WaitForSingleObject(handle, 0). Только WAIT_OBJECT_0 доказывает
+полный native exit; после него закрывается owned handle. При неподтверждённом exit QTimer
+повторяет probe через 10 мс, сохраняя reference, busy и shutdown barrier без public
+completion/error и `deleteLater`. Native Windows regression действительно удерживает FLS
+callback, проверяет Qt wait=True / OS WAIT_TIMEOUT, затем разрешает полный выход.
+
+OpenThread failure отменяет HTTP до его начала и диагностируется. Без handle exit нельзя
+подтвердить: worker остаётся retained, shutdown fail-closed с явным логом
+`Shutdown blocked: native thread exit unverified`, без ложного pass. Probe failure также
+диагностируется (повтор одинаковой ошибки не засоряет лог), timer продолжает retries.
+CloseHandle failure после доказанного exit логируется как resource leak, но не блокирует
+barrier: завершение потока уже подтверждено. Автоматического bypass/terminate нет.
+
+Terminal идемпотентный `cleanup()` запрещает новые jobs и подавляет pending/late outcomes.
+Он не выполняет blocking join/terminate и не закрывает синхронный HTTP client из Qt thread:
+текущий запрос естественно завершается по существующим connect/read/write/pool timeouts,
+затем закрывает client в worker. `is_cleanup_complete()` становится True только после
+cleanup и main-thread relay фактического выхода worker. App вызывает cleanup также при
+ошибке config.save и включает этот predicate в общий QTimer barrier. Qt остаётся
+отзывчивым; отдельного общего deadline shutdown нет, HTTP timeouts не являются гарантией
+фиксированной полной длительности запроса или закрытия transport.
 
 ### Audio и Settings lifecycle
 
