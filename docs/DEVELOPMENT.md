@@ -14,8 +14,15 @@ httpx и evdev
 Актуальная verification этапа 5: **256 passed, 2 skipped**, scoped ruff, isolated
 sdist/wheel, полная binary-only резолюция, clean install/`pip check` и installed
 imports на существующем CPython 3.15.2 x64 успешны; исторический blocker PyAudio снят.
-Команды, версии и внешние Temp paths приведены в
-[плане Windows](WINDOWS_IMPLEMENTATION_PLAN.md#этап-5--миграция-аудио-подсистемы-на-sounddevice-portaudio-lifecycle-metadata-и-clean-install-gates).
+После этапа 5 проведена санкционированная частичная нативная верификация Windows
+(desktop smoke) на существующем установленном runtime этапа 5 в изолированном профиле без
+сетевого endpoint; нативный gate 8 перешел в статус **PARTIAL / OPEN**. Обычный запуск успешен
+(exit 0) с реальной записью звука в память (~2 с), хуками `WH_KEYBOARD_LL`, SendInput
+в собственное окно и чистым выходом; consoleless-запуск через `pythonw.exe` завершился с
+exit 1 из-за таймаута фокуса окна (точная причина не установлена, ограничения Windows — возможная
+причина; injection не запускался, SendInput предотвращен focus guard, production-дефект не подтвержден).
+Подробности, результаты и команды приведены в
+[плане Windows](WINDOWS_IMPLEMENTATION_PLAN.md#частичная-нативная-verification-windows-post-stage-5-2026-11-04).
 Native gates обеих ОС и полная релизная квалификация Python остаются открыты.
 
 Для разработки с уже созданным окружением:
@@ -48,8 +55,9 @@ Windows venv использует `Scripts\python.exe`, не Linux `.venv/bin/py
 Инструкция wheel/`pip check`/consoleless `typr-gui`/Unicode cwd — в
 [README](../README.md#установка). Не переиспользуйте Linux-only venv на Windows.
 Существующий Python 3.15.2 x64 прошел packaging/import gates, но это не полная
-релизная квалификация minor. Новый Python не устанавливался. GUI требует
-отдельного разрешения и не входит в unit-проверки.
+релизная квалификация minor. Новый Python не устанавливался. Натурный smoke
+проведен частично в изолированном harness (gate 8 PARTIAL / OPEN), полнофункциональный
+запуск GUI и сквозная транскрипция требуют отдельного разрешения.
 
 ```bash
 ./.venv/bin/typr
@@ -121,6 +129,12 @@ bash -n install.sh uninstall.sh
   script. Это не native Linux shell regression; installer и dry-run не запускались.
 - Wheel evidence этапа 5 относится к реализованному коду и зависимостям до финального
   docs-only обновления статуса; повторная сборка из-за этого обновления не выполнялась.
+- Частичная нативная верификация Windows (post-stage 5 desktop smoke): натурный
+  smoke выполнен в изолированном harness без endpoint на runtime этапа 5; native
+  gate 8 находится в статусе **PARTIAL / OPEN**. Продакшен-лаунчер `typr-gui.exe`
+  не принят; baseline tests (256 passed, 2 skipped) не повторялся; production-код не менялся.
+  Канонические свидетельства, команды и результаты прогонов — в
+  [плане Windows](WINDOWS_IMPLEMENTATION_PLAN.md#частичная-нативная-verification-windows-post-stage-5-2026-11-04).
 
 ## Ручная Desktop Проверка
 
