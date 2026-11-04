@@ -53,7 +53,8 @@ Deployment root получается удалением конечного `/v1`
 
 1. Main Qt thread не выполняет длительные network, audio или input операции.
 2. `HotkeyManager` только публикует события записи и не управляет audio/network напрямую.
-3. `AudioRecorder` завершает stream и thread до публикации готового WAV.
+3. `AudioRecorder` закрывает stream в worker до публикации WAV; фактический выход
+   worker отдельно проверяется через completion predicates.
 4. Один результат транскрипции либо вставляется и возвращает приложение в `IDLE`, либо переводит его в управляемый `ERROR` с автоматическим recovery.
 5. Windows оставляет опубликованный текст в clipboard навсегда (как Copy), без clear/restore
    даже при ошибке/shutdown. Linux сохраняет текстовый backup/restore по сравнению строк;
@@ -116,7 +117,7 @@ False и явная ошибка при timeout/известном отказе,
 только запрашивает остановку, без join Qt thread; повтор initialize во время
 завершения возвращает False с ошибкой, после выхода worker возможен чистый restart.
 Эти unit-проверенные границы не означают готовность всего Windows приложения:
-audio/UI этапа 4 и desktop smoke еще не выполнены.
+нативные audio/UI и desktop smoke еще не выполнены.
 
 ### Text injection boundary
 
@@ -142,7 +143,42 @@ Windows/no-backend завершаются немедленно, Linux — тол
 и фактического выхода worker (is_alive=False), включая диагностируемое исключение close.
 Cleanup/quit идемпотентны. Qt event loop остается активным, join и принудительного timeout
 выхода нет: daemon worker не может быть оборван обычным app quit до освобождения ресурсов.
-Audio redesign этим не выполняется.
+Barrier также ждёт actual exit основного AudioRecorder и временных recorder Settings
+(если lazy dialog был создан). Entry point вызывает controller quit в finally после
+start/exec, включая исключения, и обрабатывает Qt events до завершения того же barrier.
+Отдельного timeout/join или обходного quit нет.
+
+### Audio и Settings lifecycle
+
+Все public AudioRecorder calls выполняются в main Qt thread. `start_recording() -> bool`
+означает acceptance; `stop_recording() -> None` завершается через `audio_ready(bytes)` /
+`recording_error(str)`. `cancel_recording()` инвалидирует callbacks.
+`request_devices() -> bool` публикует `devices_ready(list[{index,name,channels}])` либо
+`devices_error(str)`; get_devices удалён. Создание PortAudio, enumeration,
+open/read/stop/close/terminate и сборка WAV выполняются только в worker. Terminal cleanup
+неблокирующий; `is_cleanup_complete()` проверяет actual exit, `is_operation_complete()`
+защищает старт следующей операции и recovery.
+
+PortAudio — общий ресурс процесса: module-level lock сериализует **полный** lifecycle
+между всеми AudioRecorder (основная запись, Settings refresh/microphone test и ещё
+завершающиеся recorder после hide/reopen), от конструктора PyAudio до последней
+попытки terminate, включая обработку ошибок. Lock захватывается и ожидается только
+в worker, никогда в Qt thread; отдельные instances могут принять запрос одновременно,
+но не обращаются к PortAudio параллельно. После получения lock worker проверяет stop
+до конструктора: отменённая/shutdown операция не касается hardware и не публикует
+устаревшие callbacks; обычный stop ожидающей записи даёт пустой audio_ready. Ожидание
+lock также входит в actual exit completion predicate и shutdown barrier. Принудительного
+timeout, join UI или прерывания выполняющегося device syscall нет; порядок обслуживания
+ожидающих instances не гарантируется.
+
+Settings держит references всех временных recorder до actual exit. Refresh и microphone
+test полностью async; test использует snapshot audio config с выбранным в UI устройством.
+Таймер 2 секунд запрашивает stop; при медленном open длительность фактической записи не
+гарантируется. Hide/reopen/shutdown инвалидируют identity операций и останавливают timer;
+late results не меняют UI. Dialog cleanup terminal; app включает его completion predicate
+в общий barrier без создания lazy dialog при shutdown. Cancel hotkey UI скрыт без нового
+workflow. Windows Settings объясняет clipboard без restore/clear и ограничения elevated/UAC;
+Linux semantics сохранены.
 
 Windows backend использует QTimer (poll 10 мс, timeout 2 с) для освобождения Ctrl/Shift/
 Alt/Win, включая обе физические стороны, **и клавиши V** (она не modifier).
@@ -176,7 +212,7 @@ UInput/open/write не обещается принудительно преры�
 Restore и cleanup errors
 логируются, injection ошибки передаются caller; failed verification не очищает clipboard.
 Preflight is_available на Linux проверяет зависимости/helpers, но реальный отказ открытия
-uinput определяется асинхронной операцией. Settings/i18n clipboard подсказка — этап 4.
+uinput определяется асинхронной операцией. Windows clipboard policy показана в Settings.
 
 ```text
 ~/.config/typr/config.json       settings and API key

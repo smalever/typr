@@ -54,6 +54,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "tray.status.unknown": "Unknown",
         "tray.notification.error.title": "Typr Error",
         # Notifications in App
+        "app.notify.text_injection_unavailable.windows": (
+            "Text injection unavailable. Elevated targets and secure desktop/UAC are unsupported."
+        ),
         "app.notify.text_injection_unavailable": (
             "Text injection unavailable. Check /dev/uinput access and clipboard tools."
         ),
@@ -130,6 +133,16 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "settings.hotkeys.info": (
             "Note: Hotkeys are registered directly with your input devices via evdev."
         ),
+        "settings.hotkeys.info.windows": (
+            "Push-to-talk uses a Windows keyboard hook. Injected key events are ignored."
+        ),
+        "settings.clipboard.windows": (
+            "Typr copies text and sends Ctrl+V. Text remains in the clipboard; Typr never "
+            "restores or clears it, including on error or exit. External copying may change "
+            "the paste result. Elevated applications and secure desktop/UAC are unsupported."
+        ),
+        "settings.audio.unavailable": "Audio operation could not be started.",
+        "settings.audio.devices_error": "Could not list input devices: {error}",
         "settings.audio.group": "Audio Input",
         "settings.audio.device": "Input Device:",
         "settings.audio.device_default": "Default",
@@ -150,7 +163,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "History is stored locally at <code>~/.local/share/typr/history.json</code>. "
             "Open the History window from the tray icon to browse and copy past transcriptions."
         ),
-        "settings.about.desc": "Speech-to-text for Linux using OpenAI-compatible local APIs",
+        "settings.history.info.windows": (
+            "History is stored locally at <code>%LOCALAPPDATA%\\Typr\\history.json</code>. "
+            "Open History from the tray to browse and copy transcriptions."
+        ),
+        "settings.about.desc": "Speech-to-text for Linux and Windows via OpenAI-compatible APIs",
         "settings.about.version": "Version 0.4.0",
         # Test Connection Outputs
         "settings.api.test.checking": "Checking connection...",
@@ -178,6 +195,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "settings.fetch.err_generic": "Failed to fetch models: {error}",
     },
     "ru": {
+        "app.notify.text_injection_unavailable.windows": (
+            "Вставка текста недоступна. Приложения с повышенными правами и защищённый "
+            "рабочий стол/UAC не поддерживаются."
+        ),
         # Tray Icon
         "tray.ready": "Готов - Зажмите {hotkey} для записи",
         "tray.recording": "Запись... Отпустите для остановки",
@@ -276,6 +297,18 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "settings.hotkeys.info": (
             "Примечание: Горячие клавиши регистрируются в системе напрямую через evdev."
         ),
+        "settings.hotkeys.info.windows": (
+            "Запись по удержанию использует клавиатурный хук Windows. "
+            "Синтетические события клавиш игнорируются."
+        ),
+        "settings.clipboard.windows": (
+            "Typr копирует текст и отправляет Ctrl+V. Текст остаётся в буфере: Typr не "
+            "восстанавливает и не очищает его, в том числе при ошибке или выходе. "
+            "Внешнее копирование может изменить результат вставки. Приложения с повышенными "
+            "правами и защищённый рабочий стол/UAC не поддерживаются."
+        ),
+        "settings.audio.unavailable": "Не удалось запустить аудиооперацию.",
+        "settings.audio.devices_error": "Не удалось получить устройства ввода: {error}",
         "settings.audio.group": "Вход звука",
         "settings.audio.device": "Устройство ввода:",
         "settings.audio.device_default": "По умолчанию",
@@ -296,7 +329,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "История хранится локально в файле <code>~/.local/share/typr/history.json</code>. "
             "Откройте окно истории из трея, чтобы просмотреть и скопировать прошлые записи."
         ),
-        "settings.about.desc": "Голосовой ввод для Linux через локальные OpenAI-совместимые API",
+        "settings.history.info.windows": (
+            "История хранится локально в <code>%LOCALAPPDATA%\\Typr\\history.json</code>. "
+            "Откройте историю из трея для просмотра и копирования транскрипций."
+        ),
+        "settings.about.desc": "Голосовой ввод для Linux и Windows через OpenAI-совместимые API",
         "settings.about.version": "Версия 0.4.0",
         # Test Connection Outputs
         "settings.api.test.checking": "Проверка соединения...",

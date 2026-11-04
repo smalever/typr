@@ -1,10 +1,12 @@
 """Settings dialog for Typr."""
 
+import sys
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 
 import httpx
-from PyQt6.QtCore import QObject, QRunnable, Qt, QThreadPool, pyqtSignal
+from PyQt6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, pyqtSignal
 from PyQt6.QtGui import QKeySequence
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -242,6 +244,17 @@ class SettingsDialog(QDialog):
             raise RuntimeError("Qt global thread pool is unavailable")
         self._thread_pool = thread_pool
         self._active_requests: set[_ApiRequest] = set()
+        self._audio_recorders: set = set()
+        self._devices_recorder = None
+        self._test_recorder = None
+        self._audio_shutdown = False
+        self._audio_visible = False
+        self._microphone_timer = QTimer(self)
+        self._microphone_timer.setSingleShot(True)
+        self._microphone_timer.timeout.connect(self._stop_microphone_test)
+        self._audio_reaper = QTimer(self)
+        self._audio_reaper.setInterval(10)
+        self._audio_reaper.timeout.connect(self._reap_audio)
         self._setup_ui()
         self._load_settings()
 
@@ -424,23 +437,23 @@ class SettingsDialog(QDialog):
         self._ptt_hotkey_edit = QKeySequenceEdit()
         hotkey_layout.addRow(tr("settings.hotkeys.ptt", "Push-to-Talk:"), self._ptt_hotkey_edit)
 
-        # Cancel hotkey
-        self._cancel_hotkey_edit = QKeySequenceEdit()
-        hotkey_layout.addRow(
-            tr("settings.hotkeys.cancel", "Cancel Recording:"), self._cancel_hotkey_edit
-        )
-
         layout.addWidget(hotkey_group)
 
         # Info
         info_label = QLabel(
             tr(
-                "settings.hotkeys.info",
+                "settings.hotkeys.info.windows" if sys.platform == "win32"
+                else "settings.hotkeys.info",
                 "Note: Hotkeys are registered directly with your input devices via evdev.",
             )
         )
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
+
+        if sys.platform == "win32":
+            clipboard_note = QLabel(tr("settings.clipboard.windows"))
+            clipboard_note.setWordWrap(True)
+            layout.addWidget(clipboard_note)
 
         layout.addStretch()
 
@@ -461,9 +474,12 @@ class SettingsDialog(QDialog):
         audio_layout.addRow(tr("settings.audio.device", "Input Device:"), self._device_combo)
 
         # Refresh devices button
-        refresh_btn = QPushButton(tr("settings.audio.refresh", "Refresh Devices"))
-        refresh_btn.clicked.connect(self._refresh_devices)
-        audio_layout.addRow("", refresh_btn)
+        self._refresh_devices_btn = QPushButton(tr("settings.audio.refresh", "Refresh Devices"))
+        self._refresh_devices_btn.clicked.connect(self._refresh_devices)
+        audio_layout.addRow("", self._refresh_devices_btn)
+        self._devices_status = QLabel("")
+        self._devices_status.setWordWrap(True)
+        audio_layout.addRow("", self._devices_status)
 
         # Sample rate (read-only info)
         sample_info = QLabel(tr("settings.audio.sample_rate_val", "16000 Hz (optimal for Whisper)"))
@@ -475,18 +491,15 @@ class SettingsDialog(QDialog):
         test_group = QGroupBox(tr("settings.audio.test_group", "Test Recording"))
         test_layout = QVBoxLayout(test_group)
 
-        test_btn = QPushButton(tr("settings.audio.test_btn", "Test Microphone"))
-        test_btn.clicked.connect(self._test_microphone)
-        test_layout.addWidget(test_btn)
+        self._test_microphone_btn = QPushButton(tr("settings.audio.test_btn", "Test Microphone"))
+        self._test_microphone_btn.clicked.connect(self._test_microphone)
+        test_layout.addWidget(self._test_microphone_btn)
 
         self._test_status = QLabel("")
         test_layout.addWidget(self._test_status)
 
         layout.addWidget(test_group)
         layout.addStretch()
-
-        # Populate devices
-        self._refresh_devices()
 
         return widget
 
@@ -513,7 +526,8 @@ class SettingsDialog(QDialog):
 
         info_label = QLabel(
             tr(
-                "settings.history.info",
+                "settings.history.info.windows" if sys.platform == "win32"
+                else "settings.history.info",
                 "History is stored locally at "
                 "<code>~/.local/share/typr/history.json</code>. Open the History window "
                 "from the tray icon to browse and copy past transcriptions.",
@@ -542,7 +556,7 @@ class SettingsDialog(QDialog):
         desc = QLabel(
             tr(
                 "settings.about.desc",
-                "Speech-to-text for Linux using OpenAI and Parakeet-compatible APIs",
+                "Speech-to-text for Linux and Windows using OpenAI-compatible APIs",
             )
         )
         desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -591,12 +605,13 @@ class SettingsDialog(QDialog):
                 self.config.hotkeys.push_to_talk, QKeySequence.SequenceFormat.PortableText
             )
         )
-        self._cancel_hotkey_edit.setKeySequence(
-            QKeySequence.fromString(self.config.hotkeys.cancel_recording)
-        )
-
         # Audio device
         device_index = self._device_combo.findData(self.config.audio.input_device)
+        if device_index < 0 and self.config.audio.input_device is not None:
+            self._device_combo.addItem(
+                str(self.config.audio.input_device), self.config.audio.input_device,
+            )
+            device_index = self._device_combo.findData(self.config.audio.input_device)
         if device_index >= 0:
             self._device_combo.setCurrentIndex(device_index)
 
@@ -646,10 +661,6 @@ class SettingsDialog(QDialog):
 
         # Hotkeys
         self.config.hotkeys.push_to_talk = shortcut.text
-
-        cancel_seq = self._cancel_hotkey_edit.keySequence()
-        if not cancel_seq.isEmpty():
-            self.config.hotkeys.cancel_recording = cancel_seq.toString()
 
         # Audio
         self.config.audio.input_device = self._device_combo.currentData()
@@ -848,62 +859,131 @@ class SettingsDialog(QDialog):
         self._api_test_status.setText(message)
 
     def _refresh_devices(self) -> None:
-        """Refresh audio device list."""
-        current_device = self._device_combo.currentData()
+        """Enumerate devices exclusively on the recorder worker."""
+        if self._audio_shutdown or not self._audio_visible or self._devices_recorder is not None:
+            return
+        from typr.core.audio_recorder import AudioRecorder
+
+        recorder = AudioRecorder()
+        self._audio_recorders.add(recorder)
+        self._devices_recorder = recorder
+        self._refresh_devices_btn.setEnabled(False)
+        self._devices_status.setText("")
+        recorder.devices_ready.connect(
+            lambda devices: self._devices_finished(recorder, devices, "")
+        )
+        recorder.devices_error.connect(lambda error: self._devices_finished(recorder, [], error))
+        if not recorder.request_devices():
+            self._devices_finished(recorder, [], tr("settings.audio.unavailable"))
+
+    def _devices_finished(self, recorder, devices: list, error: str) -> None:
+        if recorder is not self._devices_recorder:
+            return
+        self._devices_recorder = None
+        self._retire_audio(recorder)
+        self._refresh_devices_btn.setEnabled(True)
+        if error:
+            logger.error(f"Failed to get devices: {error}")
+            self._devices_status.setText(
+                tr("settings.audio.devices_error").format(error=error)
+            )
+            return
+        current = self._device_combo.currentData()
         self._device_combo.clear()
-        self._device_combo.addItem("Default", None)
-
-        try:
-            from typr.core.audio_recorder import AudioRecorder
-
-            recorder = AudioRecorder()
-            devices = recorder.get_devices()
-            recorder.cleanup()
-
-            for device in devices:
-                self._device_combo.addItem(device["name"], device["name"])
-
-            # Restore selection
-            if current_device:
-                index = self._device_combo.findData(current_device)
-                if index >= 0:
-                    self._device_combo.setCurrentIndex(index)
-
-        except Exception as e:
-            logger.error(f"Failed to get devices: {e}")
+        self._device_combo.addItem(tr("settings.audio.device_default", "Default"), None)
+        for device in devices:
+            self._device_combo.addItem(device["name"], device["name"])
+        index = self._device_combo.findData(current)
+        if index < 0 and current is not None:
+            # A temporarily disconnected device must not silently become Default on Apply.
+            self._device_combo.addItem(str(current), current)
+            index = self._device_combo.findData(current)
+        if index >= 0:
+            self._device_combo.setCurrentIndex(index)
 
     def _test_microphone(self) -> None:
-        """Test microphone recording."""
+        """Request a test; stop and results are asynchronous too."""
+        if self._audio_shutdown or not self._audio_visible or self._test_recorder is not None:
+            return
+        from typr.core.audio_recorder import AudioRecorder
+
+        recorder = AudioRecorder(replace(
+            self.config.audio, input_device=self._device_combo.currentData(),
+        ))
+        self._audio_recorders.add(recorder)
+        self._test_recorder = recorder
+        self._test_microphone_btn.setEnabled(False)
         self._test_status.setText(
             tr("settings.audio.test_status_recording", "Recording for 2 seconds...")
         )
+        recorder.audio_ready.connect(lambda data: self._microphone_finished(recorder, data, ""))
+        recorder.recording_error.connect(
+            lambda error: self._microphone_finished(recorder, b"", error)
+        )
+        if recorder.start_recording():
+            self._microphone_timer.start(2000)
+        else:
+            self._microphone_finished(recorder, b"", tr("settings.audio.unavailable"))
 
-        try:
-            from PyQt6.QtCore import QTimer
+    def _stop_microphone_test(self) -> None:
+        if self._test_recorder is not None:
+            self._test_recorder.stop_recording()
 
-            from typr.core.audio_recorder import AudioRecorder
+    def _microphone_finished(self, recorder, data: bytes, error: str) -> None:
+        if recorder is not self._test_recorder:
+            return
+        self._test_recorder = None
+        self._microphone_timer.stop()
+        self._retire_audio(recorder)
+        self._test_microphone_btn.setEnabled(True)
+        if error:
+            message = tr("settings.audio.test_status_error").format(error=error)
+        elif len(data) > 1000:
+            message = tr("settings.audio.test_status_success").format(bytes=len(data))
+        else:
+            message = tr("settings.audio.test_status_fail")
+        self._test_status.setText(message)
 
-            recorder = AudioRecorder()
-            recorder.start_recording()
+    def _retire_audio(self, recorder) -> None:
+        recorder.cleanup()
+        self._audio_reaper.start()
 
-            def stop_recording():
-                audio_data = recorder.stop_recording()
-                recorder.cleanup()
+    def _reap_audio(self) -> None:
+        self._audio_recorders = {
+            recorder for recorder in self._audio_recorders
+            if not recorder.is_cleanup_complete()
+        }
+        if not self._audio_recorders:
+            self._audio_reaper.stop()
 
-                if audio_data and len(audio_data) > 1000:
-                    self._test_status.setText(
-                        tr(
-                            "settings.audio.test_status_success", "Success! Recorded {bytes} bytes"
-                        ).format(bytes=len(audio_data))
-                    )
-                else:
-                    self._test_status.setText(
-                        tr("settings.audio.test_status_fail", "Recording too short or empty")
-                    )
+    def _cancel_audio(self) -> None:
+        self._devices_recorder = None
+        self._test_recorder = None
+        self._microphone_timer.stop()
+        for recorder in self._audio_recorders:
+            recorder.cancel_recording()
+            self._retire_audio(recorder)
+        self._refresh_devices_btn.setEnabled(True)
+        self._test_microphone_btn.setEnabled(True)
+        self._test_status.setText("")
+        self._devices_status.setText("")
 
-            QTimer.singleShot(2000, stop_recording)
+    def cleanup(self) -> None:
+        """Terminal, nonblocking shutdown; keep ownership until actual exit."""
+        self._audio_shutdown = True
+        self._cancel_audio()
 
-        except Exception as e:
-            self._test_status.setText(
-                tr("settings.audio.test_status_error", "Error: {error}").format(error=e)
-            )
+    def is_cleanup_complete(self) -> bool:
+        self._reap_audio()
+        return not self._audio_recorders
+
+    def hideEvent(self, event) -> None:
+        self._audio_visible = False
+        self._cancel_audio()
+        super().hideEvent(event)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._cancel_audio()
+        self._audio_visible = True
+        self._refresh_devices()

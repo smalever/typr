@@ -1,11 +1,175 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import httpx
 import pytest
 
 from typr.config import AppConfig
 from typr.ui import settings_dialog
+
+
+@pytest.fixture
+def audio_dialog(monkeypatch):
+    """Exercise dialog methods without constructing any QWidget or native audio."""
+    import sys
+    from types import ModuleType
+
+    class Signal:
+        def __init__(self):
+            self.callbacks = []
+
+        def connect(self, callback):
+            self.callbacks.append(callback)
+
+        def emit(self, value):
+            for callback in self.callbacks:
+                callback(value)
+
+    recorders = []
+
+    class Recorder:
+        def __init__(self, config=None):
+            self.config = config
+            self.devices_ready, self.devices_error = Signal(), Signal()
+            self.audio_ready, self.recording_error = Signal(), Signal()
+            self.request_devices = Mock(return_value=True)
+            self.start_recording = Mock(return_value=True)
+            self.stop_recording = Mock(return_value=None)
+            self.cancel_recording = Mock()
+            self.cleanup = Mock()
+            self.is_cleanup_complete = Mock(return_value=False)
+            recorders.append(self)
+
+    boundary = ModuleType("typr.core.audio_recorder")
+    boundary.AudioRecorder = Recorder
+    monkeypatch.setitem(sys.modules, boundary.__name__, boundary)
+    dialog = SimpleNamespace(
+        config=AppConfig(), _audio_recorders=set(), _devices_recorder=None,
+        _test_recorder=None, _audio_shutdown=False, _audio_visible=True,
+        _microphone_timer=Mock(), _audio_reaper=Mock(), _device_combo=Mock(),
+        _refresh_devices_btn=Mock(), _test_microphone_btn=Mock(),
+        _devices_status=Mock(), _test_status=Mock(),
+    )
+    dialog._device_combo.currentData.return_value = "selected microphone"
+    dialog._device_combo.findData.return_value = 1
+    for name in (
+        "_refresh_devices", "_devices_finished", "_test_microphone", "_stop_microphone_test",
+        "_microphone_finished", "_retire_audio", "_reap_audio", "_cancel_audio",
+        "cleanup", "is_cleanup_complete",
+    ):
+        setattr(dialog, name, getattr(settings_dialog.SettingsDialog, name).__get__(dialog))
+    return dialog, recorders
+
+
+def test_devices_async_selection_error_and_actual_exit(audio_dialog):
+    dialog, recorders = audio_dialog
+    dialog._refresh_devices()
+    recorder = recorders[0]
+    recorder.request_devices.assert_called_once()
+    dialog._device_combo.clear.assert_not_called()
+    dialog._refresh_devices()
+    assert len(recorders) == 1
+    recorder.devices_ready.emit([{"index": 1, "name": "selected microphone", "channels": 1}])
+    dialog._device_combo.setCurrentIndex.assert_called_once_with(1)
+    recorder.cleanup.assert_called_once()
+    assert not dialog.is_cleanup_complete()
+    recorder.is_cleanup_complete.return_value = True
+    assert dialog.is_cleanup_complete()
+    dialog._refresh_devices()
+    recorders[-1].devices_error.emit("privacy denied")
+    assert "privacy denied" in dialog._devices_status.setText.call_args.args[0]
+
+
+def test_microphone_async_stop_results_and_config_snapshot(audio_dialog):
+    dialog, recorders = audio_dialog
+    dialog._test_microphone()
+    recorder = recorders[0]
+    assert recorder.config.input_device == "selected microphone"
+    assert dialog.config.audio.input_device is None
+    dialog._microphone_timer.start.assert_called_once_with(2000)
+    dialog._test_microphone()
+    assert len(recorders) == 1
+    dialog._stop_microphone_test()
+    recorder.stop_recording.assert_called_once()
+    recorder.cleanup.assert_not_called()
+    recorder.audio_ready.emit(b"x" * 2000)
+    assert "2000" in dialog._test_status.setText.call_args.args[0]
+    assert recorder in dialog._audio_recorders
+    assert not dialog.is_cleanup_complete()
+
+
+def test_close_reopen_shutdown_invalidates_old_callbacks_and_keeps_ownership(audio_dialog):
+    dialog, recorders = audio_dialog
+    dialog._test_microphone()
+    dialog._refresh_devices()
+    old_test, old_devices = recorders
+    dialog._audio_visible = False
+    dialog._cancel_audio()
+    dialog._microphone_timer.stop.assert_called()
+    dialog._audio_visible = True
+    dialog._test_microphone()
+    dialog._refresh_devices()
+    dialog._test_status.reset_mock()
+    dialog._device_combo.reset_mock()
+    old_test.audio_ready.emit(b"x" * 2000)
+    old_test.recording_error.emit("late")
+    old_devices.devices_ready.emit([])
+    dialog._test_status.setText.assert_not_called()
+    dialog._device_combo.clear.assert_not_called()
+    dialog.cleanup()
+    assert len(dialog._audio_recorders) == 4
+    dialog._test_microphone()
+    dialog._refresh_devices()
+    assert len(recorders) == 4
+    for recorder in recorders:
+        recorder.cancel_recording.assert_called()
+        recorder.is_cleanup_complete.return_value = True
+    assert dialog.is_cleanup_complete()
+
+
+def test_microphone_error_cancels_timer(audio_dialog):
+    dialog, recorders = audio_dialog
+    dialog._test_microphone()
+    recorders[0].recording_error.emit("device removed")
+    dialog._microphone_timer.stop.assert_called()
+    dialog._stop_microphone_test()
+    recorders[0].stop_recording.assert_not_called()
+    assert "device removed" in dialog._test_status.setText.call_args.args[0]
+
+
+@pytest.mark.parametrize("operation", ["devices", "microphone"])
+def test_audio_rejected_request_is_retired_without_waiting(audio_dialog, monkeypatch, operation):
+    import sys
+
+    dialog, _ = audio_dialog
+    boundary = sys.modules["typr.core.audio_recorder"]
+    recorder = boundary.AudioRecorder()
+    recorder.start_recording.return_value = False
+    recorder.request_devices.return_value = False
+    monkeypatch.setattr(boundary, "AudioRecorder", lambda *args: recorder)
+    if operation == "devices":
+        dialog._refresh_devices()
+        assert dialog._devices_recorder is None
+    else:
+        dialog._test_microphone()
+        assert dialog._test_recorder is None
+        dialog._microphone_timer.start.assert_not_called()
+    recorder.cleanup.assert_called_once()
+    assert recorder in dialog._audio_recorders
+
+
+def test_windows_ui_translations_exist_in_both_languages():
+    from typr.utils.i18n import TRANSLATIONS
+
+    for language in ("en", "ru"):
+        for key in (
+            "app.notify.text_injection_unavailable.windows", "settings.hotkeys.info.windows",
+            "settings.clipboard.windows", "settings.history.info.windows",
+            "settings.audio.unavailable", "settings.audio.devices_error",
+        ):
+            assert TRANSLATIONS[language][key]
 
 
 @contextmanager

@@ -1,5 +1,6 @@
 """Main application controller for Typr."""
 
+import sys
 from enum import Enum, auto
 from typing import TYPE_CHECKING
 
@@ -128,7 +129,11 @@ class TyprApp(QObject):
             self.tray_icon.show_notification(
                 tr("app.notify.error_title", "Typr Error"),
                 tr(
-                    "app.notify.text_injection_unavailable",
+                    "app.notify.text_injection_unavailable.windows" if sys.platform == "win32"
+                    else "app.notify.text_injection_unavailable",
+                    "Text injection unavailable. "
+                    "Elevated targets and secure desktop are unsupported."
+                    if sys.platform == "win32" else
                     "Text injection unavailable. Check /dev/uinput access and clipboard tools.",
                 ),
                 self.tray_icon.MessageIcon.Warning,
@@ -165,6 +170,9 @@ class TyprApp(QObject):
             logger.debug(f"Cannot start recording in state {self._state}")
             return
 
+        if not self.audio_recorder.is_operation_complete():
+            return
+
         self._set_state(AppState.RECORDING)
         if not self.audio_recorder.start_recording():
             self._set_state(
@@ -186,7 +194,7 @@ class TyprApp(QObject):
     @pyqtSlot(bytes)
     def _on_audio_ready(self, audio_data: bytes) -> None:
         """Handle completed audio recording."""
-        if self._shutting_down:
+        if self._shutting_down or self._state != AppState.TRANSCRIBING:
             return
         if not audio_data:
             self._set_state(AppState.IDLE, tr("app.notify.no_audio", "No audio recorded"))
@@ -307,7 +315,8 @@ class TyprApp(QObject):
     @pyqtSlot()
     def _recover_from_error(self) -> None:
         """Recover from error state."""
-        if not self._shutting_down and self._state == AppState.ERROR:
+        if (not self._shutting_down and self._state == AppState.ERROR
+                and self.audio_recorder.is_operation_complete()):
             self._set_state(AppState.IDLE)
 
     @pyqtSlot()
@@ -369,13 +378,16 @@ class TyprApp(QObject):
         try:
             # Invalidate injection BEFORE persistence, even if save later fails.
             self.text_injector.cleanup()
-            if self._state == AppState.RECORDING:
-                self.audio_recorder.cancel_recording()
+            self.audio_recorder.cancel_recording()
             self.config.save()
         except Exception as exc:  # Qt shutdown boundary
             logger.error(f"Shutdown/save failed: {exc}")
         finally:
-            for component in (self.audio_recorder, self.hotkey_manager):
+            settings = getattr(self, "_settings_dialog", None)
+            components = (self.audio_recorder, self.hotkey_manager)
+            if settings is not None:
+                components += (settings,)
+            for component in components:
                 try:
                     component.cleanup()
                 except Exception as exc:
@@ -383,10 +395,13 @@ class TyprApp(QObject):
             self._finish_quit_when_injection_closed()
 
     def _finish_quit_when_injection_closed(self) -> None:
-        """Keep Qt alive until Linux worker finally has released its resources."""
+        """Keep Qt alive until injection AND audio workers actually exit."""
         if self._quit_completed:
             return
-        if not self.text_injector.is_cleanup_complete():
+        settings = getattr(self, "_settings_dialog", None)
+        if (not self.text_injector.is_cleanup_complete()
+                or not self.audio_recorder.is_cleanup_complete()
+                or (settings is not None and not settings.is_cleanup_complete())):
             QTimer.singleShot(10, self._finish_quit_when_injection_closed)
             return
         self._quit_completed = True

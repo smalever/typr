@@ -2,8 +2,9 @@
 
 ## Статус и правила исполнения
 
-Этапы 1–3 реализованы (статус и открытые gates ниже); этап 4 остается **планом будущих
-изменений**. Поддержка Windows приложения еще **не готова**. Действующая архитектура
+Этапы 1–4 реализованы, независимое review этапа 4 завершено; доступная финальная
+автоматизация выполнена, но package/import gates заблокированы текущим toolchain
+(точные результаты ниже). Поддержка Windows приложения еще **не готова**. Действующая архитектура
 описана в [ARCHITECTURE.md](ARCHITECTURE.md), правила документации — в [DOCUMENTATION_POLICY.md](DOCUMENTATION_POLICY.md).
 - Агент выполняет только явно порученный этап; наличие плана не разрешает произвольные изменения системы, запуск GUI или commit.
 - Координатор утверждает архитектуру, контракты и зависимости; исполнитель выбирает локальную реализацию в утвержденных границах.
@@ -239,6 +240,108 @@ Linux native gates, релизная minor Python и stage-4 audio/UI/package н
 - Критерии проверки (Gate): тесты контракта, таймаута модификаторов, partial SendInput cleanup, late callback cancellation, регресс Linux helper.
 
 ### Этап 4 — Audio lifecycle, UI адаптация, запуск из venv и метаданные пакета
+
+**Статус (2026-11-03): implemented + independent review completed; доступная
+автоматизация завершена, clean full install/import gates заблокированы Python 3.15.2.**
+Принятый AudioRecorder использует worker-owned PortAudio с общей для процесса
+сериализацией lifecycle PortAudio, async stop/results/device enumeration и terminal
+nonblocking cleanup с actual-exit predicates. Settings refresh и microphone test
+переведены на эти API; выбранное устройство фиксируется snapshot config. References
+временных recorder удерживаются до actual exit; hide/reopen/shutdown отменяют timer
+и результаты. Lazy Settings включён в общий audio+injection shutdown barrier.
+Entry point finally использует тот же controller barrier при ошибках start/exec.
+Cancel UI скрыт; добавлены RU/EN Windows notification/clipboard/hotkey/history
+подсказки, crossplatform About/description и Windows classifier без version bump.
+README/Development содержат инструкции venv/consoleless launcher/Unicode cwd.
+
+Независимое review и повторное review исправления завершены: P1 process-global
+PortAudio fix принят; предшествующий targeted результат — **125 passed** (данные
+завершенной приемки, не новый запуск этой verification). Unit tests используют
+fake widgets/method isolation/QCoreApplication без QApplication, GUI, hooks,
+clipboard, microphone или endpoint. Production-заглушки зависимостей не добавлялись.
+
+#### Финальная verification этапа 4 (2026-11-03)
+
+Среда: Windows 11 x64 (`10.0.26300`, AMD64), CPython **3.15.2**, MSC v.1951;
+Qt/PyQt **6.12.0**, pytest **9.2.0**, ruff **0.17.3**, build **1.6.1**,
+hatchling **1.33.0**. Проектная `.venv` Linux-only: `.venv/Scripts/python.exe`
+отсутствует. Использован существующий внешний toolchain:
+`C:\Users\smale\AppData\Local\Temp\kilo\typr-stage1-venv\Scripts\python.exe`.
+Он не содержит pip и не изменялся. `py --list-paths` недоступен (`py` не найден);
+`uv python list --only-installed` показывает только 3.15.2. Python 3.12 не найден,
+новый interpreter не скачивался. Релизная minor остается не принятой: наличие
+cp312 wheel ниже не заменяет полный clean install и native smoke на Python 3.12.
+
+Для воспроизведения PowerShell-команд ниже:
+
+```powershell
+$repo = 'D:\@home\sma\programming\typr'
+$tool = 'C:\Users\smale\AppData\Local\Temp\kilo\typr-stage1-venv\Scripts\python.exe'
+$dist = 'C:\Users\smale\AppData\Local\Temp\kilo\typr-stage4-verification-dist'
+$verify = 'C:\Users\smale\AppData\Local\Temp\kilo\typr-stage4-verify-2kn0uv11'
+$clean = "$verify\clean-venv\Scripts\python.exe"
+$env:PYTHONDONTWRITEBYTECODE = '1'
+```
+
+Все outputs/новый venv находятся вне repo; перед созданием проверено существование
+родителя `Test-Path -LiteralPath 'C:\Users\smale\AppData\Local\Temp\kilo'`.
+`$verify` получен через `tempfile.mkdtemp(prefix='typr-stage4-verify-', dir=...)`,
+venv создан `$tool` через `venv.create(root/'clean-venv', with_pip=True)`;
+новый pip — **26.2.2**. Existing venv/system dependencies не менялись.
+
+| Проверка | Актуальный результат |
+| --- | --- |
+| Full applicable pytest, один запуск | **232 passed, 2 skipped**, 1.74 s. Shell modules skipped на Windows; не Linux gate. |
+| Scoped ruff всех измененных Python, включая untracked tests | **All checks passed**. |
+| `git diff --check` | Успех; только предупреждения Git о будущей LF→CRLF конвертации. |
+| `& $tool -m build --outdir $dist` | Успех **с isolation**: sdist и wheel 0.4.0, wheel построен из sdist; оба isolated env использовали hatchling 1.33.0. No-isolation fallback не требовался. |
+| PyAudio binary cp312/win_amd64 download | **Успех**: `PyAudio-0.2.14-cp312-cp312-win_amd64.whl` (164 kB), без установки. |
+| PyAudio binary cp315/win_amd64 download | **Нет wheel**: `No matching distribution found for PyAudio`. |
+| Full wheel install в новом `$verify\clean-venv` | **Заблокирован** отсутствием PyAudio wheel для 3.15.2; source build не выполнялся. |
+| Диагностическая неполная установка wheel | Установлен `typr==0.4.0` с `--no-deps`, затем все non-Linux runtime dependencies кроме PyAudio; это **не** успешный full install. |
+| `& $clean -m pip check` | **FAIL**: `typr 0.4.0 requires pyaudio, which is not installed.` Не объявляется успешной проверкой полного package. |
+| Installed imports `typr.app`, `typr.__main__` | Обе попытки **FAIL / blocked**: `ModuleNotFoundError: No module named 'pyaudio'`; без подмены PyAudio/evdev. |
+| Installed metadata/launcher | Успех: версия 0.4.0, `console_scripts: typr`, `gui_scripts: typr-gui`, оба → `typr.__main__:main`; Windows 11 classifier; evdev с Linux-only marker и отсутствует в venv; `$verify\clean-venv\Scripts\typr-gui.exe` существует. Launcher не запускался. |
+
+Точные команды основных проверок (pytest выполнялся из внешнего Temp cwd;
+ruff/Git/build — из repo):
+
+```powershell
+$env:PYTHONPATH = "$repo\src"
+& $tool -m pytest -q "$repo\tests" --rootdir="$repo\tests" --confcutdir="$repo\tests" --import-mode=importlib -p no:cacheprovider
+& $tool -m ruff check src/typr/__main__.py src/typr/app.py src/typr/core/audio_recorder.py src/typr/ui/settings_dialog.py src/typr/utils/i18n.py tests/test_app.py tests/test_settings_dialog.py tests/test_audio_recorder.py tests/test_main.py
+git diff --check
+& $tool -m build --outdir $dist
+& $clean -m pip download --only-binary=:all: --platform win_amd64 --python-version 312 --implementation cp --abi cp312 --no-deps PyAudio --dest "$verify\pyaudio-cp312"
+& $clean -m pip download --only-binary=:all: --platform win_amd64 --python-version 315 --implementation cp --abi cp315 --no-deps PyAudio --dest "$verify\pyaudio-cp315"
+& $clean -m pip install --only-binary=pyaudio "$dist\typr-0.4.0-py3-none-any.whl"
+# Только диагностика после неуспешного full install, без PyAudio stub/build:
+& $clean -m pip install --no-deps "$dist\typr-0.4.0-py3-none-any.whl"
+& $clean -m pip install 'PyQt6>=6.5.0' 'httpx>=0.25.0' 'websockets>=12.0'
+& $clean -m pip check
+```
+
+Диагностически установлены PyQt6/Qt6 6.12.0, PyQt6-sip 13.13.0, httpx 0.28.1,
+websockets 17.4, anyio 4.16.0, certifi 2026.10.23, httpcore 1.0.9, h11 0.16.0,
+idna 3.20. Проверки installed package выполнялись новым `$clean` после удаления
+`PYTHONPATH`, из `$verify\Unicode пробелы cwd`. До обоих imports `HOME`,
+`USERPROFILE`, `LOCALAPPDATA` направлены в `$verify\isolated-profile`.
+Проверены `importlib.metadata.distribution('typr')`, entry_points, classifiers,
+Requires-Dist, `find_spec('evdev') is None`, наличие launcher и отдельно вызваны
+`importlib.import_module('typr.app')` / `importlib.import_module('typr.__main__')`.
+`main`, QApplication и entrypoints не запускались, real config/logs не читались.
+
+**Открытые gates:** полный clean install/pip check и оба installed imports на
+выбранной релизной minor Python с настоящим PyAudio; applicable suite на Linux,
+Linux permissions/persistence/shell/evdev/uinput и Wayland/X11 clipboard regression;
+нативные Windows hooks/session reset/SendInput/clipboard/ACL-positive acceptance,
+audio devices/privacy/removal/recovery и shutdown с реальными устройствами;
+Windows 11 GUI/consoleless launch из Unicode+spaces cwd, tray/settings/history,
+настоящая транскрипция с тестовым endpoint. Скачанный cp312 wheel не проверялся
+исполнением. GUI/hardware/network transcription запрещены в этой verification;
+поддержка Windows **не объявляется готовой**. Версия metadata осталась 0.4.0,
+SemVer bump/commit/push и install.sh не выполнялись.
+
 - Область записи: `src/typr/core/audio_recorder.py`, `src/typr/app.py`, `src/typr/__main__.py`, `src/typr/ui/settings_dialog.py`, `src/typr/utils/i18n.py`, `pyproject.toml`.
 - Область записи (tests): `tests/test_audio_recorder.py`, `tests/test_app.py`, `tests/test_settings_dialog.py`.
 - Документация: `README.md`, `docs/DEVELOPMENT.md`, `docs/ARCHITECTURE.md`, этот план.

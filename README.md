@@ -69,8 +69,8 @@
 
 ## Совместимость
 
-Windows runtime пока не готов: реализованы платформенные persistence-границы и
-PTT и асинхронная вставка с mocked unit tests; это не подтверждение desktop support.
+Этапы 1–4 Windows реализованы: persistence, PTT, async injection/audio и Settings.
+Поддержка пока не принята: automation этапа 4 и native gates обеих ОС открыты.
 Оставшиеся этапы и открытые Linux/Windows gates — в
 [плане Windows](docs/WINDOWS_IMPLEMENTATION_PLAN.md).
 
@@ -91,7 +91,37 @@ PTT и асинхронная вставка с mocked unit tests; это не �
 
 ## Установка
 
+### Windows: venv и запуск (verification pending)
+
+Windows 11 x64 требует поддерживаемую minor Python с готовыми PyQt6/PyAudio wheels.
+Релизная minor ещё не подтверждена; временный тестовый Python 3.15.2 её не заменяет.
+Пример PowerShell для отдельной верификации, не выполненная установка:
+
+```powershell
+py -3.12 -m venv .venv
+& ".\.venv\Scripts\python.exe" -m pip install "C:\path\to\typr-0.4.0-py3-none-any.whl"
+& ".\.venv\Scripts\python.exe" -m pip check
+& ".\.venv\Scripts\typr-gui.exe"
+# Диагностический запуск с консолью:
+& ".\.venv\Scripts\python.exe" -m typr
+```
+
+`typr-gui` — consoleless entrypoint, `typr` — консольный. Для проверки Unicode cwd
+запустите launcher по абсолютному пути из заранее созданного каталога с Unicode
+и пробелами, например `C:\Users\User\Проверка Typr`. Запуск не должен зависеть от cwd.
+Не запускайте второй экземпляр: системного mutex пока нет. GUI/hardware smoke требует
+отдельного разрешения; эти команды здесь не выполнялись. Данные Windows хранятся в
+`%LOCALAPPDATA%\Typr`; Linux shell-установщик на Windows не нужен.
+
+Settings асинхронно обновляет устройства и проверяет выбранный микрофон. Закрытие
+окна отменяет тест и результаты. Выход ждёт фактического освобождения аудио, сохраняя
+отзывчивость Qt. Cancel hotkey не реализован и скрыт. Windows Settings объясняет
+Ctrl+V, сохранение текста без restore/clear и ограничения elevated/UAC; Linux
+сохраняет прежнее clipboard-поведение.
+
 ### Быстрая установка
+
+Следующий установщик предназначен только для Linux.
 
 Запустите универсальный установщик. Он:
 - определит дистрибутив, DE/WM и тип сессии (Wayland/X11);

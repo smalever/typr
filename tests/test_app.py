@@ -40,6 +40,8 @@ def controller():
     app.text_injector = Mock()
     app.tray_icon = Mock()
     app.audio_recorder = Mock()
+    app.audio_recorder.is_operation_complete.return_value = True
+    app.audio_recorder.is_cleanup_complete.return_value = True
     app.hotkey_manager = Mock()
     yield module, app, core
 
@@ -166,3 +168,189 @@ def test_quit_waits_for_worker_finally_without_blocking_qt(
     app._finish_quit_when_injection_closed()
     quit_app.assert_called_once()
     app.config.save.assert_called_once()
+
+
+@pytest.fixture
+def live_audio(controller, monkeypatch):
+    """Real facade with a worker-owned, gated PortAudio test boundary."""
+    module, app, core = controller
+    boundary = ModuleType("pyaudio")
+    boundary.paInt16 = 8
+    entered = {name: threading.Event() for name in ("open", "read", "stop", "close", "terminate")}
+    gates = {name: threading.Event() for name in entered}
+    for gate in gates.values():
+        gate.set()
+
+    class Audio:
+        def step(self, name):
+            assert threading.get_ident() != threading.main_thread().ident
+            entered[name].set()
+            assert gates[name].wait(3)
+
+        def open(self, **kwargs):
+            self.step("open")
+            return self
+
+        def read(self, *args, **kwargs):
+            self.step("read")
+            return b"\0\0"
+
+        def get_sample_size(self, format):
+            return 2
+
+        def stop_stream(self):
+            self.step("stop")
+
+        def close(self):
+            self.step("close")
+
+        def terminate(self):
+            self.step("terminate")
+
+    boundary.PyAudio = Audio
+    path = Path(__file__).parents[1] / "src/typr/core/audio_recorder.py"
+    spec = importlib.util.spec_from_file_location("typr._app_audio_test", path)
+    audio_module = importlib.util.module_from_spec(spec)
+    with patch.dict(sys.modules, {"pyaudio": boundary}):
+        spec.loader.exec_module(audio_module)
+    app.audio_recorder = audio_module.AudioRecorder()
+    app.audio_recorder.audio_ready.connect(app._on_audio_ready)
+    app.audio_recorder.recording_error.connect(app._on_error)
+    app.transcriber = Mock()
+    yield module, app, core, entered, gates
+    app.audio_recorder.cleanup()
+    for gate in gates.values():
+        gate.set()
+    app.audio_recorder._thread.join(2)
+    assert app.audio_recorder.is_cleanup_complete()
+
+
+def test_quick_release_opening_returns_idle_without_transcription(live_audio):
+    module, app, core, entered, gates = live_audio
+    gates["open"].clear()
+    app._state = module.AppState.IDLE
+    app._on_recording_start()
+    assert entered["open"].wait(2)
+    app._on_recording_stop()
+    assert app.get_state() == module.AppState.TRANSCRIBING
+    app._on_recording_start()
+    gates["open"].set()
+    loop, poll, timeout = QEventLoop(), QTimer(), QTimer()
+    poll.timeout.connect(lambda: loop.quit() if app.get_state() == module.AppState.IDLE else None)
+    timeout.setSingleShot(True)
+    timeout.timeout.connect(loop.quit)
+    poll.start(1)
+    timeout.start(2000)
+    loop.exec()
+    poll.stop()
+    timeout.stop()
+    assert app.get_state() == module.AppState.IDLE
+    assert not entered["read"].is_set()
+    app.transcriber.transcribe.assert_not_called()
+
+
+@pytest.mark.parametrize("state", ["RECORDING", "TRANSCRIBING", "TYPING"])
+@pytest.mark.parametrize("phase", ["open", "read", "stop", "close", "terminate"])
+def test_quit_audio_actual_completion_all_states_failed_save(live_audio, monkeypatch, state, phase):
+    module, app, core, entered, gates = live_audio
+    gates["open"].clear()
+    gates[phase].clear()
+    app._state = module.AppState.IDLE
+    app._on_recording_start()
+    assert entered["open"].wait(2)
+    if phase == "read":
+        gates["open"].set()
+        assert entered["read"].wait(2)
+    app._state = getattr(module.AppState, state)
+    app.config.save.side_effect = OSError("mock save failure")
+    app._injection_token = token = object()
+    app._injection_text = "pending"
+    quit_app = Mock()
+    monkeypatch.setattr(module.QApplication, "quit", quit_app)
+    app._quit()
+    if phase != "open":
+        gates["open"].set()
+        assert entered[phase].wait(2)
+    assert not app.audio_recorder.is_cleanup_complete()
+    assert app._injection_token is None
+    app._on_injection_completed(token)
+    app._on_transcription_complete("stale")
+    app._on_audio_ready(b"stale")
+    responsive = []
+    QTimer.singleShot(0, lambda: responsive.append(True))
+    core.processEvents()
+    assert responsive == [True]
+    quit_app.assert_not_called()
+    app.transcriber.transcribe.assert_not_called()
+    app.history.add.assert_not_called()
+    gates[phase].set()
+    loop, timeout = QEventLoop(), QTimer()
+    quit_app.side_effect = loop.quit
+    timeout.setSingleShot(True)
+    timeout.timeout.connect(loop.quit)
+    timeout.start(2000)
+    loop.exec()
+    timeout.stop()
+    assert app.audio_recorder.is_cleanup_complete()
+    assert entered["terminate"].is_set()
+    quit_app.assert_called_once()
+    app._quit()
+    app._finish_quit_when_injection_closed()
+    quit_app.assert_called_once()
+    app.config.save.assert_called_once()
+
+
+def test_recovery_and_start_require_completed_audio(controller):
+    module, app, _ = controller
+    app._state = module.AppState.ERROR
+    app.audio_recorder.is_operation_complete.return_value = False
+    app._recover_from_error()
+    assert app.get_state() == module.AppState.ERROR
+    app._state = module.AppState.IDLE
+    app._on_recording_start()
+    app.audio_recorder.start_recording.assert_not_called()
+    app._state = module.AppState.ERROR
+    app.audio_recorder.is_operation_complete.return_value = True
+    app._recover_from_error()
+    assert app.get_state() == module.AppState.IDLE
+    app._on_recording_start()
+    app.audio_recorder.start_recording.assert_called_once()
+
+
+def test_quit_requires_both_independent_completion_predicates(controller, monkeypatch):
+    module, app, _ = controller
+    app.audio_recorder.is_cleanup_complete.return_value = False
+    app.text_injector.is_cleanup_complete.return_value = False
+    quit_app = Mock()
+    monkeypatch.setattr(module.QApplication, "quit", quit_app)
+    scheduled = []
+    monkeypatch.setattr(module.QTimer, "singleShot",
+                        lambda delay, callback: scheduled.append(callback))
+    app._quit()
+    quit_app.assert_not_called()
+    app.audio_recorder.is_cleanup_complete.return_value = True
+    scheduled.pop()()
+    quit_app.assert_not_called()
+    app.text_injector.is_cleanup_complete.return_value = True
+    scheduled.pop()()
+    quit_app.assert_called_once()
+
+
+@pytest.mark.parametrize("created", [False, True])
+def test_settings_lazy_cleanup_joins_existing_barrier(controller, monkeypatch, created):
+    module, app, _ = controller
+    settings = Mock() if created else None
+    app._settings_dialog = settings
+    scheduled = []
+    monkeypatch.setattr(module.QTimer, "singleShot", lambda ms, cb: scheduled.append(cb))
+    quit_app = Mock()
+    monkeypatch.setattr(module.QApplication, "quit", quit_app)
+    if settings is not None:
+        settings.is_cleanup_complete.return_value = False
+    app._quit()
+    if settings is not None:
+        settings.cleanup.assert_called_once()
+        quit_app.assert_not_called()
+        settings.is_cleanup_complete.return_value = True
+        scheduled.pop()()
+    quit_app.assert_called_once()

@@ -9,7 +9,10 @@
 Проект требует Python 3.10+ и использует `hatchling`, PyQt6, PyAudio, httpx и evdev
 (зависимость evdev ограничена Linux). `install.sh` создает проектное окружение
 `.venv` и устанавливает package в editable mode вместе с dev-зависимостями,
-включая `pytest` и `ruff`. Поддержка Windows runtime еще не завершена.
+включая `pytest` и `ruff`. Этапы 1–4 Windows реализованы и прошли независимое review;
+актуальные automation results и package/toolchain blockers приведены в
+[плане Windows](WINDOWS_IMPLEMENTATION_PLAN.md#этап-4--audio-lifecycle-ui-адаптация-запуск-из-venv-и-метаданные-пакета).
+Native gates обеих ОС и выбор релизной minor Python остаются открыты.
 
 Для разработки с уже созданным окружением:
 
@@ -36,6 +39,12 @@ tests/test_hotkey_manager.py`. Win32 API здесь полностью mocked: �
 Для unit suite достаточно QCoreApplication, без запуска GUI.
 
 ## Запуск
+
+Windows venv использует `Scripts\python.exe`, не Linux `.venv/bin/python`.
+Инструкция wheel/`pip check`/consoleless `typr-gui`/Unicode cwd — в
+[README](../README.md#установка). Не переиспользуйте Linux-only venv на Windows.
+Временный Python 3.15.2 toolchain не подтверждает релизную minor. GUI требует
+отдельного разрешения и не входит в unit-проверки.
 
 ```bash
 ./.venv/bin/typr
@@ -85,7 +94,15 @@ bash -n install.sh uninstall.sh
 - Config/history tests используют временный HOME и не читают пользовательские данные.
 - Transcriber tests mock HTTP transport и Qt worker boundaries; реальные API calls не входят в unit suite.
 - Audio, global hotkeys, clipboard и uinput проверяются unit tests через mocks, а hardware smoke выполняется вручную в видимой desktop session.
-- UI tests используют `pytest-qt` и не должны требовать реального microphone/input device для проверки layout и signal wiring.
+- Unit UI/lifecycle tests используют fake widgets, method isolation и QCoreApplication,
+  без QApplication/widgets или native hooks/clipboard/microphone. Targeted stage-4:
+  `python -m pytest tests/test_audio_recorder.py tests/test_app.py tests/test_settings_dialog.py tests/test_main.py`.
+- Full suite, build, clean install/pip check выполняются отдельно; команды и результаты
+  финальной verification этапа 4 — в плане Windows. Успешный `pip check` требуется
+  для **полного** package: `--no-deps` install без PyAudio его не заменяет.
+  На доступном Python 3.15.2 PyAudio wheel отсутствует; binary download для Windows
+  x64 Python 3.12 успешен, но не заменяет native clean install/import на этой minor.
+  Native Linux regression и Windows GUI smoke unit-тестами не закрываются.
 
 ## Ручная Desktop Проверка
 

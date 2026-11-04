@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "typr"
 version = "0.4.0"
-description = "Speech-to-text for Linux with OpenAI Whisper"
+description = "Speech-to-text for Linux and Windows with OpenAI-compatible APIs"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
@@ -18,6 +18,7 @@ classifiers = [
     "Intended Audience :: End Users/Desktop",
     "License :: OSI Approved :: MIT License",
     "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows :: Windows 11",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
