@@ -6,10 +6,10 @@ import wave
 from dataclasses import replace
 from threading import Event, Lock, Thread
 
-import pyaudio
 from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal, pyqtSlot
 
 from typr.config import AudioConfig
+from typr.core._sounddevice_backend import OWNER
 from typr.utils.logger import logger
 
 # PortAudio initialization/termination is process-global, not recorder-local.
@@ -33,7 +33,7 @@ class AudioRecorder(QObject):
     devices_error = pyqtSignal(str)
     _delivery = pyqtSignal(int, str, object)
 
-    FORMAT = pyaudio.paInt16
+    FORMAT = "int16"
     CHUNK_SIZE = 1024
 
     def __init__(self, config: AudioConfig | None = None, parent: QObject | None = None):
@@ -120,49 +120,73 @@ class AudioRecorder(QObject):
 
     def _run_owned(self, serial: int, mode: str, config: AudioConfig, stop: Event) -> None:
         """Run with exclusive process-wide ownership of the PortAudio lifecycle."""
-        audio = stream = None
         frames = []
         payload = None
         error = None
         try:
-            audio = pyaudio.PyAudio()
-            if mode == "devices":
-                payload = self._devices(audio)
-            else:
-                device = None
-                if config.input_device:
-                    for info in self._devices(audio):
-                        if info["name"] == config.input_device:
-                            device = info["index"]
-                            break
-                    if device is None:
-                        logger.warning("Configured input device not found, using default")
-                if not stop.is_set():
-                    stream = audio.open(
-                        format=self.FORMAT, channels=config.channels,
-                        rate=config.sample_rate, input=True,
-                        frames_per_buffer=self.CHUNK_SIZE, input_device_index=device,
-                    )
-                while not stop.is_set() and stream is not None:
-                    data = stream.read(self.CHUNK_SIZE, exception_on_overflow=False)
-                    frames.append(data)
-                    self._delivery.emit(serial, "audio_chunk", data)
-                    self._delivery.emit(serial, "level_changed", self._calculate_level(data))
-                payload = self._frames_to_wav(frames, config, audio)
+            with OWNER.session() as audio:
+                if mode == "devices":
+                    payload = [] if stop.is_set() else self._devices(audio)
+                else:
+                    device = None
+                    if config.input_device and not stop.is_set():
+                        for info in self._devices(audio):
+                            if info["name"] == config.input_device:
+                                device = info["index"]
+                                break
+                        if device is None:
+                            logger.warning("Configured input device not found, using default")
+                    stream = None
+                    started = False
+                    start_attempted = False
+                    try:
+                        if not stop.is_set():
+                            stream = audio.RawInputStream(
+                                dtype=self.FORMAT, channels=config.channels,
+                                samplerate=config.sample_rate, blocksize=self.CHUNK_SIZE,
+                                device=device,
+                            )
+                        if stream is not None and not stop.is_set():
+                            start_attempted = True
+                            stream.start()
+                            started = True
+                        while started and not stop.is_set():
+                            buffer, overflowed = stream.read(self.CHUNK_SIZE)
+                            data = bytes(buffer)
+                            if overflowed:
+                                logger.warning("Audio input overflow; continuing recording")
+                            frames.append(data)
+                            self._delivery.emit(serial, "audio_chunk", data)
+                            self._delivery.emit(
+                                serial, "level_changed", self._calculate_level(data))
+                        payload = self._frames_to_wav(frames, config)
+                    finally:
+                        # Independent strict attempts; do not use sounddevice's
+                        # context manager (it hides errors and can skip close).
+                        if stream is not None:
+                            if start_attempted and not started:
+                                try:
+                                    stream.abort(ignore_errors=False)
+                                except Exception as exc:
+                                    logger.error(f"Audio abort after start failure failed: {exc}")
+                            if started:
+                                try:
+                                    stream.stop(ignore_errors=False)
+                                except Exception as exc:
+                                    logger.error(f"Audio stop failed: {exc}")
+                                    error = error or f"Audio stop failed: {exc}"
+                                    try:
+                                        stream.abort(ignore_errors=False)
+                                    except Exception as abort_exc:
+                                        logger.error(f"Audio abort failed: {abort_exc}")
+                            try:
+                                stream.close(ignore_errors=False)
+                            except Exception as exc:
+                                logger.error(f"Audio close failed: {exc}")
+                                error = error or f"Audio close failed: {exc}"
         except Exception as exc:  # Worker runtime boundary, including device removal/privacy.
             error = f"Audio {mode} failed: {exc}"
             logger.error(error)
-        finally:
-            # Each teardown is attempted independently even if a previous step fails.
-            for resource, method in ((stream, "stop_stream"), (stream, "close"),
-                                     (audio, "terminate")):
-                if resource is not None:
-                    try:
-                        getattr(resource, method)()
-                    except Exception as exc:
-                        message = f"Audio {method} failed: {exc}"
-                        logger.error(message)
-                        error = error or message
         kind = "devices" if mode == "devices" else "audio"
         self._delivery.emit(serial, ("devices_error" if mode == "devices"
                                     else "recording_error") if error else f"{kind}_ready",
@@ -171,11 +195,10 @@ class AudioRecorder(QObject):
     @staticmethod
     def _devices(audio) -> list[dict]:
         devices = []
-        for index in range(audio.get_device_count()):
-            info = audio.get_device_info_by_index(index)
-            channels = info["maxInputChannels"]
+        for info in audio.query_devices():
+            channels = info["max_input_channels"]
             if isinstance(channels, int | float) and channels > 0:
-                devices.append({"index": index, "name": info["name"], "channels": channels})
+                devices.append({"index": info["index"], "name": info["name"], "channels": channels})
         return devices
 
     @staticmethod
@@ -186,13 +209,13 @@ class AudioRecorder(QObject):
         rms = (sum(s * s for s in samples) / len(samples)) ** 0.5
         return min(1.0, rms / 32767.0 * 3)
 
-    def _frames_to_wav(self, frames: list[bytes], config: AudioConfig, audio) -> bytes:
+    def _frames_to_wav(self, frames: list[bytes], config: AudioConfig) -> bytes:
         if not frames:
             return b""
         buffer = io.BytesIO()
         with wave.open(buffer, "wb") as wav:
             wav.setnchannels(config.channels)
-            wav.setsampwidth(audio.get_sample_size(self.FORMAT))
+            wav.setsampwidth(2)
             wav.setframerate(config.sample_rate)
             wav.writeframes(b"".join(frames))
         return buffer.getvalue()

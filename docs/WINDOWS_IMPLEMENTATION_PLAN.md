@@ -2,14 +2,16 @@
 
 ## Статус и правила исполнения
 
-Этапы 1–4 исторически реализованы на базе PyAudio, независимое review этапа 4 завершено;
-доступная финальная автоматизация этапа 4 выполнена (232 passed, 2 skipped), однако clean full install
-и installed import gates оказались заблокированы отсутствием готовых wheels PyAudio для CPython 3.15.2 x64
-(точные исторические результаты зафиксированы в описании этапа 4 ниже).
-Координатор утвердил архитектурное решение: миграция аудио-подсистемы с `PyAudio` на `sounddevice`
-в рамках нового Этапа 5. Новое решение запланировано, но к его реализации **НЕ приступали**;
-проверены исключительно read-only метаданные пакетов на PyPI, что не является runtime proof.
-Никакая функциональность sounddevice не объявляется реализованной или проверенной.
+**Текущий статус (2026-11-04): этапы 1–5 реализованы; автоматизированные/package/import
+gates 1–7 этапа 5 успешны, native gate 8 остается OPEN.** Миграция с PyAudio на
+sounddevice завершена по утвержденному lifecycle. Независимое read-only general-deep
+review не обнаружило подтвержденных дефектов; независимый targeted suite — 67 passed.
+Финальный full applicable suite — **256 passed, 2 skipped**; clean full install,
+`pip check` и installed imports успешны на существующем CPython 3.15.2 Windows x64.
+Новый Python не устанавливался; GUI и native audio не запускались.
+Результаты этапов 1–4 ниже — **исторические срезы**, включая 232 passed / 2 skipped
+и прежний blocker PyAudio этапа 4; они не являются sounddevice evidence.
+Blocker packaging/import на 3.15.2 снят этапом 5, но это не полная релизная квалификация minor.
 Поддержка Windows приложения еще **не готова**. Действующая архитектура
 описана в [ARCHITECTURE.md](ARCHITECTURE.md), правила документации — в [DOCUMENTATION_POLICY.md](DOCUMENTATION_POLICY.md).
 - Агент выполняет только явно порученный этап; наличие плана не разрешает произвольные изменения системы, запуск GUI или commit.
@@ -19,10 +21,10 @@
 
 ## Цель и non-goals
 
-Цель: нативная работа tray-first клиента Typr на **Windows 11 x64** для существующей целевой minor версии Python (**CPython 3.15.2 x64**, acceptance pending; установка Python 3.12 не требуется) с сохранением стабильности Linux (Wayland/X11). Формат поставки первого релиза: сборка wheel, чистая установка в `.venv` без `--no-deps` и заглушек, запуск через `typr-gui` (или `python -m typr`).
+Цель: нативная работа tray-first клиента Typr на **Windows 11 x64** для существующей целевой minor версии Python (**CPython 3.15.2 x64**, packaging/import verified, native/release acceptance pending; установка Python 3.12 не требуется) с сохранением стабильности Linux (Wayland/X11). Формат поставки первого релиза: сборка wheel, чистая установка в `.venv` без `--no-deps` и заглушек, запуск через `typr-gui` (или `python -m typr`).
 Non-goals (требуют отдельного решения при необходимости): freezer (PyInstaller/one-dir), инсталлятор (Inno Setup/WiX), генерация `.ico`, PE metadata, цифровая подпись Authenticode / SmartScreen reputation, автозапуск, новый CI, WSL/Docker, локальный STT сервер, эмуляция ввода текста посимвольно, обход UIPI, сложный ACL framework, автомиграция данных и изменение Linux shell-скриптов (за исключением узкой адаптации проверок audio-зависимостей и импортов в `install.sh` под sounddevice).
 
-## 1. Фактический baseline и подтвержденные пробелы
+## 1. Исторический baseline до этапов 1–5 и исходные пробелы
 
 Срез кодовой базы: версия `0.4.0`.
 
@@ -88,9 +90,9 @@ Non-goals (требуют отдельного решения при необх�
 - **Селекция устройств и defaults:** snapshot конфигурации при старте, сопоставление по имени устройства (`exact device name`); детерминированный fallback на системный default применяется исключительно при ненайденном выбранном имени устройства с информативным логированием. Любые ошибки перечисления/запроса (`query_devices`) или открытия потока (`RawInputStream`) возвращаются как явные асинхронные ошибки (сигналы `devices_error`, `recording_error`), без произвольного fallback на default при сбоях обращения к оборудованию.
 - **Политика переполнения (overflow):** флаг `overflowed`, возвращаемый `RawInputStream.read(...)`, обрабатывается нефатально — логируется предупреждение, накопление сэмпла продолжается.
 - **Сериализация PortAudio в процессе:** строгая process-global worker-only сериализация ВСЕХ вызовов PortAudio API (перечисление устройств, инициализация, open, read, stop, close, termination) под общим локом. Никакие PortAudio операции не выполняются в Qt main thread.
-- **Границы жизненного цикла и atexit boundary:** библиотека `sounddevice` выполняет `_initialize()` при импорте модуля и регистрирует `atexit.register(_exit_handler)` (который вызывает `_terminate()`). Простой top-level `import sounddevice` в кодовой базе приложения запрещен: перед реализацией утверждается явное владение init/terminate/error/atexit boundary (deferred worker import под lock). Запрещено обходить контракт monkeypatching приватных переменных/счетчиков (`_initialized`) и недопустимо полагаться на main-thread atexit teardown.
+- **Утвержденное владение init/terminate/error/atexit:** единственный `SoundDeviceOwner` в `_sounddevice_backend.py` загружает модуль через importlib только в worker под общим lock. Ссылка на module сохраняется локально до `exec_module`, включая failed import; зарегистрированный `_exit_handler` снимается через `atexit.unregister` в `finally`, в том числе при ошибке импорта. Успешно загруженный module сохраняется owner для следующих сессий; failed import удаляется из `sys.modules` только если там тот же module. Повторная сессия вызывает `_initialize()`, каждая попытка завершается vetted `_exit_handler()` в worker, включая hidden init success перед ошибкой восстановления stderr. При finalization failure owner помечается broken (poison), дальнейшие операции запрещены до перезапуска. Unmanaged import и main-thread session отвергаются. Top-level `import sounddevice`, monkeypatch `_initialized` и native atexit teardown запрещены.
 - **Диагностика ошибок:** вызовы `stop()`, `abort()`, `close()` обязаны явно диагностировать и логировать возникающие исключения; запрещено использовать silent `ignore_errors` defaults.
-- **Expert API и failure paths:** обязательна проверка совместимости версий PortAudio и обработка путей сбоев инициализации нативного бэкенда (Expert API failure paths). Версия `sounddevice` выбирается как проверенная версия или ограниченный диапазон после проверки Expert API; политика версий `sounddevice` и `cffi` будет утверждена по итогам валидации без предварительного pin.
+- **Expert API и версии:** утверждены `sounddevice==0.5.6` (проверенный private finalizer), `cffi>=2.1.1,<3` (binary floor целевого cp315 Windows), PortAudio `>=19.6.0,<20` с runtime version check. Проверены distribution/module version и failure paths; собственный init counter не вводится. Изменение pin требует повторной проверки source lifecycle.
 - **Cleanup predicates и shutdown barrier:** сохранение предикатов фактического завершения потоков (`is_cleanup_complete() -> bool`) и общего неблокирующего shutdown barrier в `TyprApp` (основной audio worker + отставленные worker-потоки Settings + text injector).
 - **Неизменность контракта вставки текста:** token identity, acceptance semantics и подавление late results остаются неизменными; функциональных изменений в `src/typr/core/text_injector.py` и `src/typr/app.py` не планируется.
 - **Локальные state tests:** no-device, privacy, default, device removal/recovery, shutdown во время recording/transcribing/typing; тесты быстрого press/release во время открытия stream, delayed stop/close/error/shutdown.
@@ -369,12 +371,14 @@ SemVer bump/commit/push и install.sh не выполнялись.
 
 ### Этап 5 — Миграция аудио-подсистемы на sounddevice (PortAudio lifecycle, metadata и clean install gates)
 
-**Статус: запланирован / утверждено координатором; к реализации НЕ приступали; acceptance pending.**
-Никакой код этапа 5 еще не реализован и не объявляется прошедшим проверку.
-Миграция утверждена координатором для разблокирования сборки и чистой установки под существующий
-интерпретатор **CPython 3.15.2 x64** на Windows 11 без необходимости установки Python 3.12.
+**Статус (2026-11-04): реализован, independent review и gates 1–7 пройдены;
+native gate 8 OPEN.** PyAudio заменен sounddevice, сохранены async facade, общий
+worker-only lock и shutdown barrier. Реализованы blocking RawInputStream, явные
+start/stop/abort/close с диагностикой, bytes(buffer), нефатальный overflow и WAV
+с параметрами config без NumPy. Контракт injection не менялся. Сборка и полная
+чистая установка под существующий **CPython 3.15.2 x64** разблокированы без нового Python.
 
-#### Обоснование и статус метаданных зависимостей (Read-Only)
+#### Обоснование и первоначальная read-only проверка метаданных (исторический preflight)
 Проверена доступность готовых бинарных wheels на PyPI (источники: PyPI [sounddevice 0.5.6](https://pypi.org/project/sounddevice/0.5.6/), [cffi 2.1.1](https://pypi.org/project/cffi/2.1.1/), а также официальная документация [sounddevice 0.5.6 installation](https://python-sounddevice.readthedocs.io/en/0.5.6/installation.html), [raw streams](https://python-sounddevice.readthedocs.io/en/0.5.6/api/raw-streams.html) и [expert mode](https://python-sounddevice.readthedocs.io/en/0.5.6/api/expert-mode.html)):
 - `sounddevice 0.5.6`: доступен wheel `sounddevice-0.5.6-py3-none-win_amd64.whl` (Requires-Python: `>=3.7`), включающий предкомпилированную DLL PortAudio для Windows x64;
 - `cffi 2.1.1`: доступен wheel `cffi-2.1.1-cp315-cp315-win_amd64.whl` (Requires-Python: `>=3.10`) под целевую архитектуру CPython 3.15 Windows x64.
@@ -382,18 +386,18 @@ SemVer bump/commit/push и install.sh не выполнялись.
 
 #### Архитектурный контракт и правила реализации
 Реализация этапа 5 строго следует утвержденному контракту подраздела [2.5](#25-audio-и-single-instance-архитектурный-контракт-sounddevice):
-- Изоляция жизненного цикла sounddevice: запрет top-level import, утверждение явного владения `init/terminate/error/atexit` boundary (с учетом регистрации `atexit.register(_exit_handler)`), запрет monkeypatching `_initialized` и запрет неявного teardown в main thread.
+- Изоляция жизненного цикла sounddevice реализована утвержденным owner из 2.5: retained importlib module, unregister handler даже после failed import, worker-only vetted finalizer и poison после cleanup failure; без monkeypatching `_initialized` и main-thread teardown.
 - Потоковая модель: только существующий worker, блокирующий `RawInputStream.read(...)` возвращает `(buffer, overflowed)`, данные берутся через `bytes(buffer)`, нефатальная обработка `overflowed`, без callbacks в первой миграции.
 - Формат: PCM 16-bit, `sample_rate` и `channels` из `config` (16 kHz mono только defaults), запись без `numpy`.
 - Устройства и ошибки: snapshot config, exact device name, детерминированный fallback на default только при ненайденном имени; ошибки query/open возвращаются как явные асинхронные ошибки (`devices_error`, `recording_error`).
 - Синхронизация и барьеры: process-global worker-only lock для всех PortAudio вызовов; сохранение фактических сигналов фасада (`audio_ready`, `audio_chunk`, `recording_error`, `level_changed`, `devices_ready`, `devices_error`), предикатов `is_cleanup_complete()` и общего shutdown barrier (main audio + Settings retired workers + injector).
 - Неизменность контракта вставки: token identity, acceptance semantics, late result filtering без функциональных правок `text_injector.py` и `app.py`.
 
-#### Область будущей реализации
-- Код: `src/typr/core/audio_recorder.py` (и возможный узкий backend после утверждения lifecycle). Функциональные изменения `src/typr/app.py`, `src/typr/ui/settings_dialog.py`, `src/typr/core/text_injector.py` не планируются без крайней необходимости.
-- Метаданные и зависимости: `pyproject.toml` (удаление `pyaudio` и `types-pyaudio`; добавление проверенной версии или ограниченного диапазона `sounddevice` после проверки Expert API; политика версий `sounddevice` и `cffi` без предварительного pin).
+#### Область выполненной реализации
+- Код: `src/typr/core/audio_recorder.py`, новый узкий owner `src/typr/core/_sounddevice_backend.py`. Функциональных изменений `src/typr/app.py`, `src/typr/ui/settings_dialog.py`, `src/typr/core/text_injector.py` на этапе 5 нет.
+- Метаданные и зависимости: `pyproject.toml` — удалены `pyaudio` и `types-pyaudio`; добавлены `sounddevice==0.5.6`, `cffi>=2.1.1,<3` после source/API проверки.
 - Инсталлятор Linux: `install.sh` (узкая адаптация проверок зависимостей и импортов под `sounddevice` с сохранением системных библиотек PortAudio `libportaudio2` для Linux; запуск инсталлятора запрещен).
-- Тесты: `tests/test_audio_recorder.py`, `tests/test_app.py`, `tests/test_settings_dialog.py`.
+- Тесты: адаптированы `tests/test_audio_recorder.py`, `tests/test_app.py`, добавлен `tests/test_sounddevice_backend.py`; существующие Settings regressions включены в full suite без изменения файла.
 - Документация: `README.md`, `docs/ARCHITECTURE.md`, `docs/DEVELOPMENT.md`, `docs/WINDOWS_IMPLEMENTATION_PLAN.md`.
 
 #### Программа тестирования (Tests)
@@ -407,21 +411,115 @@ SemVer bump/commit/push и install.sh не выполнялись.
 - Token regressions: проверка неизменности семантики operation token в `TextInjector` при изоляции audio lifecycle.
 
 #### Критерии проверки и ворота готовности (Gates этапа 5)
-1. **Full binary resolution:** успешная бинарная резолюция и загрузка wheels для ВСЕГО графа runtime-зависимостей приложения под CPython 3.15.2 Windows x64.
-2. **Metadata verification:** проверка построенного wheel на полное отсутствие `pyaudio` и `types-pyaudio` в `Requires-Dist`.
-3. **Isolated package build:** чистая сборка sdist и wheel через `python -m build` в изолированном окружении.
-4. **Clean external venv install:** успешная полная установка полученного wheel в чистый внешний Windows venv без ключа `--no-deps` и без runtime-заглушек.
-5. **Pip check:** `pip check` завершается успешно с кодом 0 (отсутствие неразрешенных зависимостей во всем графе).
-6. **Installed imports test:** успешный импорт `typr.app` и `typr.__main__` в установленном пакете из каталога с пробелами и Unicode-символами в пути, при полностью удаленной переменной окружения `PYTHONPATH` и изолированных каталогах `HOME`, `USERPROFILE`, `LOCALAPPDATA`.
-7. **No hardware on import:** чистый импорт модулей не должен вызывать обращений к PortAudio API, инициализации аудио-бэкенда или захвата аудиоустройств.
-8. **Открытые проверки:** реальное тестирование PortAudio DLL, запись с физического микрофона и натурный smoke test требуют отдельного разрешения пользователя.
+1. **PASS — Full binary resolution:** загружен ВЕСЬ runtime graph binary-only на native CPython 3.15.2 Windows x64; evdev исключен native marker.
+2. **PASS — Metadata verification:** `Requires-Dist` не содержит `pyaudio`/`types-pyaudio`, включая extras; Linux marker evdev и оба entrypoints сохранены.
+3. **PASS — Isolated package build:** sdist и wheel через isolated `python -m build`.
+4. **PASS — Clean external venv install:** полная установка wheel с настоящими dependencies, без `--no-deps`/stubs.
+5. **PASS — Pip check:** exit 0, `No broken requirements found`.
+6. **PASS — Installed imports:** `typr.app`, `typr.__main__` из site-packages, Unicode+spaces cwd, удаленный `PYTHONPATH`, изолированные HOME/USERPROFILE/LOCALAPPDATA.
+7. **PASS — No hardware on import:** sounddevice/_sounddevice/_cffi_backend отсутствуют в `sys.modules`; import guard не вызван; `ctypes.dlopen` audit events отсутствуют. QApplication/entrypoints не запускались.
+8. **OPEN — Native:** реальная загрузка/работа PortAudio DLL, физический микрофон и desktop smoke требуют отдельного разрешения; unit/package/import gates их не заменяют.
+
+#### Финальная verification этапа 5 (2026-11-04)
+
+Среда: `Windows-11-10.0.26300-SP0`, CPython **3.15.2 x64**, MSC v.1951
+(build Oct 26 2026, 14:23:21). Проектная `.venv` Linux-only, Scripts/python.exe
+отсутствует. Existing toolchain не менялся и не содержит pip. Все собственные
+verification resources созданы только в новом уникальном внешнем Temp root после
+проверки родителя `Test-Path -LiteralPath 'C:\Users\smale\AppData\Local\Temp\kilo'`.
+
+```powershell
+$repo = 'D:\@home\sma\programming\typr'
+$tool = 'C:\Users\smale\AppData\Local\Temp\kilo\typr-stage1-venv\Scripts\python.exe'
+$verify = 'C:\Users\smale\AppData\Local\Temp\kilo\typr-stage5-verify-30225342fbd746ee88fbf361606abdc2'
+$tools = "$verify\tools\Scripts\python.exe"
+$clean = "$verify\runtime\Scripts\python.exe"
+$wheel = "$verify\dist\typr-0.4.0-py3-none-any.whl"
+& $tool -B "$verify\run_verification.py"
+```
+
+Этот orchestrator выполнен из `$verify`; точные commands/cwd/exit codes сохранены
+в `$verify\results.json`, outputs — в отдельных `$verify\*.log`. Scripts созданы
+через apply_patch: `run_verification.py`, `verify_tests.py`, `installed_probe.py`.
+HOME/USERPROFILE/LOCALAPPDATA направлены в `$verify\profile`, TEMP/TMP — в
+`$verify\tmp`; bytecode и pip cache отключены. Реальные пользовательские config/секреты
+не читались. Основные выполненные команды (переменные выше раскрыты в results.json):
+
+```powershell
+# Wrapper: import guard против настоящего sounddevice/_sounddevice/_cffi_backend,
+# PYTEST_DISABLE_PLUGIN_AUTOLOAD=1, PYTHONPATH=<repo>\src, внешний cwd.
+& $tool -B "$verify\verify_tests.py"
+# Внутри wrapper ровно один pytest.main со следующими аргументами:
+# -q -ra <repo>\tests --rootdir=<repo>\tests --confcutdir=<repo>\tests
+# --import-mode=importlib -p no:cacheprovider --basetemp=<verify>\pytest-tmp
+& $tool -B -m ruff check --no-cache "$repo\src\typr\core\audio_recorder.py" "$repo\src\typr\core\_sounddevice_backend.py" "$repo\tests\test_app.py" "$repo\tests\test_audio_recorder.py" "$repo\tests\test_sounddevice_backend.py"
+& $tool -B -m venv "$verify\tools"
+& $tool -B -m venv "$verify\runtime"
+& $tools -B -m pip install --only-binary=:all: build
+& $tools -B -m build --sdist --wheel --outdir "$verify\dist" $repo
+& $clean -B -m pip download --only-binary=:all: --dest "$verify\downloads" $wheel
+& $clean -B -m pip install --only-binary=:all: $wheel
+& $clean -B -m pip check
+# Orchestrator удаляет PYTHONPATH; cwd: <verify>\Рабочая папка Unicode
+& $clean -B "$verify\installed_probe.py"
+```
+
+Результаты:
+- **256 passed, 2 skipped за 4.61 s**, full applicable pytest один раз; пропущены
+  Linux-only installer/uninstaller modules до чтения scripts. Scoped ruff — PASS.
+- Изолированная сборка создала `$verify\dist\typr-0.4.0.tar.gz` и wheel выше;
+  оба isolated build env — hatchling **1.33.0**. Build **1.6.1**, pip новых venv
+  **26.2.2**, packaging **26.3**, pyproject_hooks **1.3.3**, colorama **0.4.6**.
+- Native binary resolution без cross-target overrides загрузила весь runtime graph,
+  включая `cffi-2.1.1-cp315-cp315-win_amd64.whl`,
+  `websockets-17.4-cp315-cp315-win_amd64.whl`,
+  `pyqt6_sip-13.13.0-cp315-cp315-win_amd64.whl`,
+  `sounddevice-0.5.6-py3-none-win_amd64.whl`; все wheels — в `$verify\downloads`.
+- Полная чистая установка и pip check — PASS. Runtime: typr **0.4.0**, sounddevice
+  **0.5.6**, cffi **2.1.1**, pycparser **3.12**, PyQt6/Qt6 **6.12.0**,
+  PyQt6-sip **13.13.0**, httpx **0.28.1**, httpcore **1.0.9**, h11 **0.16.0**,
+  websockets **17.4**, anyio **4.16.0**, idna **3.20**, certifi **2026.10.23**.
+  Test tooling: pytest **9.2.0**, ruff **0.17.3**, PyQt6/Qt6 **6.12.0**.
+- Installed imports действительно из `$verify\runtime\Lib\site-packages\typr`;
+  `QCoreApplication.instance() is None`. Metadata проверена вместе с extras;
+  `typr` console / `typr-gui` GUI entrypoints → `typr.__main__:main`, оба exe
+  существуют, но не исполнялись. Production-заглушек нет.
+- Installed sounddevice source прочитан и разобран AST без импорта; сопоставлен с
+  [официальным source 0.5.6](https://python-sounddevice.readthedocs.io/en/0.5.6/_modules/sounddevice.html).
+  `_atexit.register(_exit_handler)` идет перед `_initialize()` (строки **2972/2973**);
+  credit увеличивается после успешного Pa_Initialize до stderr restoration,
+  уменьшается после успешного Pa_Terminate; finalizer исчерпывает credits циклом
+  и содержит upstream `_last_callback` cleanup. SHA-256 source:
+  `d77bf40ba945491538dd6a93b5fb8f45d051c10689f0e10c0b928ef89f172891`.
+- Существующий `C:\Program Files\Git\bin\bash.exe`, GNU Bash **5.3.15(2)-release**
+  (`x86_64-pc-cygwin`): отдельные `bash -n install.sh` и `bash -n uninstall.sh`
+  завершились с exit 0. Первоначальная объединенная команда дополнена отдельными
+  проверками обоих файлов. Это syntax check Git Bash, **не Linux native regression**.
+  Scripts и `--dry-run` не запускались. `git diff --check` успешен; только Git
+  предупреждения о будущей LF→CRLF конвертации.
+- Предварительная диагностика: у existing toolchain нет pip; первая сводная команда
+  версий дала PackageNotFoundError для отсутствовавшего websockets. Existing toolchain
+  не исправлялся; версии доступных инструментов получены отдельно, настоящий websockets
+  установлен в новый runtime venv и проверен в полном графе.
+
+Независимое read-only **general-deep review**: подтвержденных bugs нет;
+независимый targeted suite — **67 passed** (отдельное свидетельство review,
+не повтор полного suite этой verification). Неблокирующие пробелы покрытия:
+одновременные failed import + failed finalization, exact-name collisions / index 0,
+соответствие stereo fake payload запрошенному размеру read frames. Это не подтвержденные
+дефекты production и не закрывает native gate.
+
+Сборки выше соответствуют реализованному коду/зависимостям **до финального docs-only
+обновления статуса**; после него build/tests не перезапускались. Runtime/tests/version
+не менялись этой документационной правкой. Новый Python, QApplication, hardware/native
+sounddevice import, commit/push и изменение системных разрешений не выполнялись.
 
 ## 4. Чеклист верификации и критерий готовности
 
 ### 4.1. Автоматизированные проверки
-- Чистая изолированная сборка `python -m build`, чистая установка wheel в чистый внешний `.venv` без `--no-deps` и runtime-заглушек, успешный `pip check`.
-- Installed imports (`typr.app`, `typr.__main__`) из рабочей директории с Unicode и пробелами в пути с изолированным профилем и удаленным `PYTHONPATH`. Импорты не должны обращаться к железу или инициализировать PortAudio.
-- Полный applicable `pytest` на обеих ОС (с пропуском shell-тестов на Windows); `ruff check` для измененных файлов Python.
+- **PASS на Windows CPython 3.15.2 x64:** isolated sdist/wheel, full binary download, clean full install и pip check без `--no-deps`/stubs; gates 1–5 этапа 5.
+- **PASS:** installed imports из Unicode+spaces cwd с изолированным профилем и удаленным PYTHONPATH, без audio module/native init; gates 6–7.
+- **PASS на Windows:** полный applicable pytest 256 passed / 2 skipped и scoped ruff. **OPEN на Linux:** полный suite и native regressions; Git Bash syntax check их не заменяет.
 
 ### 4.2. Натурный Smoke Checklist (требует отдельного разрешения)
 - Windows 11: старт `typr-gui` без консоли из cwd с Unicode/пробелами в пути; tray/settings/history; дефолтный `Ctrl+Alt+Z`.
@@ -433,6 +531,8 @@ SemVer bump/commit/push и install.sh не выполнялись.
 - Поддержка принимается только если согласованные contracts реализованы, applicable automation и desktop smoke пройдены на обеих ОС без прав admin.
 - Пользовательские данные и секреты сохранены, UI остается отзывчивым, непроверенное честно указано в отчете.
 - Hardware/GUI проверки требуют отдельного разрешения, тестового endpoint и фиктивных секретов.
+- Этап 5: gates **1–7 PASS**, gate **8 OPEN**. Packaging/import для существующего
+  Python 3.15.2 подтверждены; полная native/release qualification minor открыта.
 - Открыты на Linux: полный applicable suite, installer shell checks, native audio, evdev, uinput, Wayland/X11 clipboard regressions.
 - Открыты на Windows: low-level keyboard hooks, session reset/lock/unlock, SendInput, clipboard policy, ACL positive acceptance.
 - Открыты на Windows: audio devices enumeration/privacy/removal/recovery и shutdown с реальными устройствами.

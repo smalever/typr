@@ -21,7 +21,7 @@ HotkeyManager / TrayIcon
 ## Компоненты
 
 - `TyprApp` - lifecycle, wiring и состояния `IDLE`, `RECORDING`, `TRANSCRIBING`, `TYPING`, `ERROR`.
-- `AudioRecorder` - PyAudio stream, recording thread и WAV assembly.
+- `AudioRecorder` - sounddevice blocking RawInputStream, recording thread и WAV assembly.
 - `WhisperTranscriber` - OpenAI-compatible HTTP request в `QThread`.
 - `HotkeyManager` - QObject facade с lazy Linux evdev / Windows WH_KEYBOARD_LL backend;
   чтение устройств, native message loop и hotplug scan выполняются в worker.
@@ -161,7 +161,7 @@ open/read/stop/close/terminate и сборка WAV выполняются тол
 
 PortAudio — общий ресурс процесса: module-level lock сериализует **полный** lifecycle
 между всеми AudioRecorder (основная запись, Settings refresh/microphone test и ещё
-завершающиеся recorder после hide/reopen), от конструктора PyAudio до последней
+завершающиеся recorder после hide/reopen), от первого worker-only импорта sounddevice до последней
 попытки terminate, включая обработку ошибок. Lock захватывается и ожидается только
 в worker, никогда в Qt thread; отдельные instances могут принять запрос одновременно,
 но не обращаются к PortAudio параллельно. После получения lock worker проверяет stop
@@ -170,6 +170,22 @@ PortAudio — общий ресурс процесса: module-level lock сер
 lock также входит в actual exit completion predicate и shutdown barrier. Принудительного
 timeout, join UI или прерывания выполняющегося device syscall нет; порядок обслуживания
 ожидающих instances не гарантируется.
+
+Единственный process-global owner загружает строго sounddevice 0.5.6 через публичный
+importlib loader с сохранением module object при неудаче. Unmanaged preimport запрещен;
+сторонние concurrent imports/use sounddevice не поддерживаются. В finally снимается
+точный `_exit_handler` с atexit даже после failed import; rollback sys.modules выполняется
+только для собственного объекта. Первый import уже инициализирует PortAudio, последующие
+операции вызывают Expert API `_initialize`. Проверенный для 0.5.6 `_exit_handler` вызывается
+только worker как balanced finalizer: также покрывает успешный native init, скрытый ошибкой
+восстановления stderr. Приватный счетчик не читается и не изменяется приложением.
+Version checks выполняются под lock: PortAudio >=19.6.0,<20 (совместимый v19 API,
+не native proof). Инициализация upstream временно перенаправляет process-wide stderr.
+Ошибка finalizer помечает общий owner broken: новые операции явно отклоняются до restart,
+без новых init, автоматического retry и native atexit fallback. Actual exit означает
+завершение попыток cleanup, не гарантию освобождения native ресурсов после ошибки.
+Strict stop/abort/close выполняются независимо; overflow нефатален. Поток открывается
+с dtype=int16 и config sample_rate/channels, данные копируются bytes(buffer), NumPy не нужен.
 
 Settings держит references всех временных recorder до actual exit. Refresh и microphone
 test полностью async; test использует snapshot audio config с выбранным в UI устройством.

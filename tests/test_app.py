@@ -174,8 +174,6 @@ def test_quit_waits_for_worker_finally_without_blocking_qt(
 def live_audio(controller, monkeypatch):
     """Real facade with a worker-owned, gated PortAudio test boundary."""
     module, app, core = controller
-    boundary = ModuleType("pyaudio")
-    boundary.paInt16 = 8
     entered = {name: threading.Event() for name in ("open", "read", "stop", "close", "terminate")}
     gates = {name: threading.Event() for name in entered}
     for gate in gates.values():
@@ -187,32 +185,47 @@ def live_audio(controller, monkeypatch):
             entered[name].set()
             assert gates[name].wait(3)
 
-        def open(self, **kwargs):
+        def RawInputStream(self, **kwargs):
             self.step("open")
             return self
 
+        def start(self):
+            pass
+
         def read(self, *args, **kwargs):
             self.step("read")
-            return b"\0\0"
+            return b"\0\0", False
 
         def get_sample_size(self, format):
             return 2
 
-        def stop_stream(self):
+        def stop(self, *, ignore_errors):
+            assert not ignore_errors
             self.step("stop")
 
-        def close(self):
+        def close(self, *, ignore_errors):
+            assert not ignore_errors
             self.step("close")
 
         def terminate(self):
             self.step("terminate")
 
-    boundary.PyAudio = Audio
     path = Path(__file__).parents[1] / "src/typr/core/audio_recorder.py"
     spec = importlib.util.spec_from_file_location("typr._app_audio_test", path)
     audio_module = importlib.util.module_from_spec(spec)
-    with patch.dict(sys.modules, {"pyaudio": boundary}):
-        spec.loader.exec_module(audio_module)
+    spec.loader.exec_module(audio_module)
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    @contextmanager
+    def session():
+        audio = Audio()
+        try:
+            yield audio
+        finally:
+            audio.terminate()
+
+    monkeypatch.setattr(audio_module, "OWNER", SimpleNamespace(session=session))
     app.audio_recorder = audio_module.AudioRecorder()
     app.audio_recorder.audio_ready.connect(app._on_audio_ready)
     app.audio_recorder.recording_error.connect(app._on_error)
@@ -258,7 +271,7 @@ def test_quit_audio_actual_completion_all_states_failed_save(live_audio, monkeyp
     app._state = module.AppState.IDLE
     app._on_recording_start()
     assert entered["open"].wait(2)
-    if phase == "read":
+    if phase in ("read", "stop"):
         gates["open"].set()
         assert entered["read"].wait(2)
     app._state = getattr(module.AppState, state)

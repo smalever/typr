@@ -2,13 +2,12 @@
 
 import importlib.util
 import io
-import sys
 import threading
 import wave
+from contextlib import contextmanager
 from pathlib import Path
 from queue import Queue
-from types import ModuleType
-from unittest.mock import patch
+from types import SimpleNamespace
 
 import pytest
 from PyQt6.QtCore import QCoreApplication, QEventLoop, QTimer
@@ -38,11 +37,13 @@ class FakeAudio:
         self.gates = {}
         self.entered = {
             name: threading.Event() for name in
-            ("construct", "devices", "open", "read", "stop_stream", "close", "terminate")
+            ("construct", "devices", "open", "start", "read", "stop_stream", "abort",
+             "close", "terminate")
         }
         self.errors = {}
         self.read_release = threading.Event()
         self.options = None
+        self.overflow = False
 
     def call(self, name):
         self.calls.append((name, threading.get_ident()))
@@ -56,14 +57,12 @@ class FakeAudio:
         self.call("construct")
         return self
 
-    def get_device_count(self):
+    def query_devices(self):
         self.call("devices")
-        return 2
+        return [{"index": index, "name": "Microphone" if index else "Output",
+                 "max_input_channels": index} for index in range(2)]
 
-    def get_device_info_by_index(self, index):
-        return {"name": "Microphone" if index else "Output", "maxInputChannels": index}
-
-    def open(self, **kwargs):
+    def RawInputStream(self, **kwargs):
         self.options = kwargs
         self.call("open")
         return self
@@ -71,12 +70,21 @@ class FakeAudio:
     def read(self, *args, **kwargs):
         self.call("read")
         assert self.read_release.wait(3)
-        return b"\x01\x00" * 1024
+        return memoryview(b"\x01\x00" * 1024), self.overflow
 
-    def stop_stream(self):
+    def start(self):
+        self.call("start")
+
+    def stop(self, *, ignore_errors):
+        assert not ignore_errors
         self.call("stop_stream")
 
-    def close(self):
+    def abort(self, *, ignore_errors):
+        assert not ignore_errors
+        self.call("abort")
+
+    def close(self, *, ignore_errors):
+        assert not ignore_errors
         self.call("close")
 
     def terminate(self):
@@ -89,23 +97,29 @@ class FakeAudio:
 
 @pytest.fixture
 def audio_module():
-    # Import-boundary only: production still requires the real PyAudio dependency.
-    stub = ModuleType("pyaudio")
-    stub.paInt16 = 8
-    stub.PyAudio = lambda: None
     path = Path(__file__).parents[1] / "src/typr/core/audio_recorder.py"
     spec = importlib.util.spec_from_file_location("typr._audio_lifecycle_test", path)
     module = importlib.util.module_from_spec(spec)
-    with patch.dict(sys.modules, {"pyaudio": stub}):
-        spec.loader.exec_module(module)
+    spec.loader.exec_module(module)
     return module
+
+
+def fake_owner(construct):
+    @contextmanager
+    def session():
+        audio = construct()
+        try:
+            yield audio
+        finally:
+            audio.terminate()
+    return SimpleNamespace(session=session)
 
 
 @pytest.fixture
 def recorder(audio_module, monkeypatch):
     core = QCoreApplication.instance() or QCoreApplication([])
     fake = FakeAudio()
-    monkeypatch.setattr(audio_module.pyaudio, "PyAudio", fake.construct)
+    monkeypatch.setattr(audio_module, "OWNER", fake_owner(fake.construct))
     recorder = audio_module.AudioRecorder()
     yield recorder, fake, core
     recorder.cleanup()
@@ -145,7 +159,7 @@ def test_delayed_open_quick_release_cancel_shutdown(recorder, action, phase):
     assert errors == []
     assert not fake.entered["read"].is_set()
     if phase == "open":
-        assert [name for name, _ in fake.calls][-3:] == ["stop_stream", "close", "terminate"]
+        assert [name for name, _ in fake.calls][-2:] == ["close", "terminate"]
     else:
         assert not fake.entered["open"].is_set()
         assert fake.calls[-1][0] == "terminate"
@@ -187,13 +201,20 @@ def test_errors_cleanup_and_retry(recorder, phase, message):
     fake.read_release.set()
     # Gate teardown failures so the main thread can request stop deterministically.
     fake.gates["open"] = threading.Event()
+    if phase == "stop_stream":
+        fake.gates["start"] = threading.Event()
     errors = []
     rec.recording_error.connect(lambda error: errors.append((error, rec.is_operation_complete())))
     assert rec.start_recording()
     if phase in ("stop_stream", "close", "terminate"):
         assert fake.entered["open"].wait(2)
+        if phase == "stop_stream":
+            fake.gates["open"].set()
+            assert fake.entered["start"].wait(2)
         rec.stop_recording()
     fake.gates["open"].set()
+    if phase == "stop_stream":
+        fake.gates["start"].set()
     spin_until(lambda: bool(errors))
     assert message in errors[0][0]
     assert errors[0][1]
@@ -224,8 +245,9 @@ def test_device_resolution_and_config_snapshot(recorder, device, index):
     rec.stop_recording()
     fake.read_release.set()
     spin_until(rec.is_operation_complete)
-    assert fake.options["input_device_index"] == index
-    assert (fake.options["channels"], fake.options["rate"]) == (1, 16000)
+    assert fake.options["device"] == index
+    assert (fake.options["channels"], fake.options["samplerate"]) == (1, 16000)
+    assert fake.options["dtype"] == "int16"
 
 
 @pytest.mark.parametrize("invalidate", ["cancel", "shutdown", "restart"])
@@ -310,7 +332,7 @@ def test_independent_cleanup_attempts_after_multiple_teardown_errors(recorder):
     fake.gates["read"].set()
     spin_until(lambda: bool(errors))
     assert rec.is_operation_complete()
-    assert [name for name, _ in fake.calls][-3:] == ["stop_stream", "close", "terminate"]
+    assert [name for name, _ in fake.calls][-4:] == ["stop_stream", "abort", "close", "terminate"]
 
 
 @pytest.fixture
@@ -339,7 +361,7 @@ def shared_audio(audio_module, monkeypatch):
         constructors.append(fake)
         return fake.construct()
 
-    monkeypatch.setattr(audio_module.pyaudio, "PyAudio", construct)
+    monkeypatch.setattr(audio_module, "OWNER", fake_owner(construct))
     yield records, fakes, constructors, attempts, core
     for rec in records:
         rec.cleanup()
@@ -456,3 +478,68 @@ def test_cross_instance_exceptions_release_lifecycle_lock(shared_audio, phase):
     assert phase in errors[0]
     assert owner.is_operation_complete() and waiting.is_operation_complete()
     assert len(constructors) == 2
+
+
+@pytest.mark.parametrize("action", ["stop", "cancel", "cleanup"])
+def test_delayed_start_respects_cancellation_and_strict_cleanup(recorder, action):
+    rec, fake, core = recorder
+    fake.gates["start"] = threading.Event()
+    ready = []
+    rec.audio_ready.connect(ready.append)
+    assert rec.start_recording()
+    assert fake.entered["start"].wait(2)
+    {"stop": rec.stop_recording, "cancel": rec.cancel_recording,
+     "cleanup": rec.cleanup}[action]()
+    responsive(core)
+    fake.gates["start"].set()
+    spin_until(rec.is_operation_complete)
+    core.processEvents()
+    assert ready == ([b""] if action == "stop" else [])
+    assert not fake.entered["read"].is_set()
+    assert [name for name, _ in fake.calls][-3:] == ["stop_stream", "close", "terminate"]
+
+
+def test_failed_start_aborts_closes_and_finalizes_independently(recorder):
+    rec, fake, _ = recorder
+    fake.errors.update(start=OSError("start failed"), abort=OSError("abort failed"),
+                       close=OSError("close failed"))
+    errors = []
+    rec.recording_error.connect(errors.append)
+    assert rec.start_recording()
+    spin_until(lambda: bool(errors))
+    assert "start failed" in errors[0]
+    assert [name for name, _ in fake.calls][-3:] == ["abort", "close", "terminate"]
+
+
+def test_overflow_preserves_bytes_and_nondefault_wav(recorder, monkeypatch, audio_module):
+    rec, fake, _ = recorder
+    warnings = []
+    monkeypatch.setattr(audio_module.logger, "warning", warnings.append)
+    rec.config = AudioConfig(channels=2, sample_rate=48000)
+    fake.overflow = True
+    results, chunks = [], []
+    rec.audio_ready.connect(results.append)
+    rec.audio_chunk.connect(chunks.append)
+    assert rec.start_recording()
+    assert fake.entered["read"].wait(2)
+    rec.stop_recording()
+    fake.read_release.set()
+    spin_until(lambda: bool(results))
+    assert warnings == ["Audio input overflow; continuing recording"]
+    assert chunks == [b"\x01\x00" * 1024]
+    with wave.open(io.BytesIO(results[0]), "rb") as wav:
+        assert (wav.getnchannels(), wav.getframerate(), wav.getsampwidth()) == (2, 48000, 2)
+        assert wav.readframes(512) == chunks[0]
+
+
+def test_selection_query_error_does_not_fallback_to_default(recorder):
+    rec, fake, _ = recorder
+    rec.config = AudioConfig(input_device="Microphone")
+    fake.errors["devices"] = OSError("query failed")
+    errors = []
+    rec.recording_error.connect(errors.append)
+    assert rec.start_recording()
+    spin_until(lambda: bool(errors))
+    assert "query failed" in errors[0]
+    assert not fake.entered["open"].is_set()
+    assert fake.entered["terminate"].is_set()

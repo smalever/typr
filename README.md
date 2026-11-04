@@ -69,8 +69,9 @@
 
 ## Совместимость
 
-Этапы 1–4 Windows реализованы: persistence, PTT, async injection/audio и Settings.
-Поддержка пока не принята: automation этапа 4 и native gates обеих ОС открыты.
+Этапы 1–5 Windows реализованы: persistence, PTT, async injection/audio, Settings
+и миграция аудио на sounddevice. Автоматизация и полная изолированная установка
+на CPython 3.15.2 x64 проверены; поддержка пока не принята: native gates обеих ОС открыты.
 Оставшиеся этапы и открытые Linux/Windows gates — в
 [плане Windows](docs/WINDOWS_IMPLEMENTATION_PLAN.md).
 
@@ -91,14 +92,20 @@
 
 ## Установка
 
-### Windows: venv и запуск (verification pending)
+### Windows: venv и запуск (native verification pending)
 
-Windows 11 x64 требует поддерживаемую minor Python с готовыми PyQt6/PyAudio wheels.
-Релизная minor ещё не подтверждена; временный тестовый Python 3.15.2 её не заменяет.
-Пример PowerShell для отдельной верификации, не выполненная установка:
+Windows 11 x64 требует готовые wheels PyQt6, sounddevice 0.5.6 и cffi >=2.1.1,<3.
+На существующем CPython 3.15.2 x64 выполнены изолированная сборка, binary-only
+загрузка полного графа зависимостей, чистая установка wheel с настоящими зависимостями
+и успешный `pip check`. Импорты установленного пакета из Unicode+spaces cwd прошли
+без загрузки sounddevice/PortAudio. Это проверка во внешнем Temp venv, не установка
+в рабочую `.venv` и не запуск приложения; native audio/GUI и полная релизная
+квалификация Python остаются открыты. Подробные результаты — в
+[этапе 5 плана Windows](docs/WINDOWS_IMPLEMENTATION_PLAN.md#этап-5--миграция-аудио-подсистемы-на-sounddevice-portaudio-lifecycle-metadata-и-clean-install-gates).
+Ниже общая инструкция PowerShell для пользователя, а не команды выполненного smoke:
 
 ```powershell
-py -3.12 -m venv .venv
+& "C:\path\to\python.exe" -m venv .venv
 & ".\.venv\Scripts\python.exe" -m pip install "C:\path\to\typr-0.4.0-py3-none-any.whl"
 & ".\.venv\Scripts\python.exe" -m pip check
 & ".\.venv\Scripts\typr-gui.exe"
@@ -293,7 +300,7 @@ Typr никогда не очищает и не восстанавливает �
 Elevated приложения и secure desktop/UAC не поддерживаются, ограничения UIPI не обходятся.
 Транскрипция сохраняется в истории (если включена) независимо от ошибки вставки.
 Настройки задержки уведомления не гарантируют restore на Windows; отдельной настройки
-restore нет. Подсказка в Settings и адаптация i18n будут выполнены на этапе 4.
+restore нет. Подсказка в Settings и адаптация i18n реализованы на этапе 4.
 
 На Linux clipboard helpers работают без отделения в фон (`wl-copy --foreground`,
 `xclip -quiet`, `xsel --nodetach`), включая восстановленный текст. При выходе Typr
@@ -410,7 +417,11 @@ GigaSTT и 30 секунд для остальных endpoint'ов. Если т�
 
 - **Язык программирования**: Python 3.10+
 - **Интерфейс (GUI)**: PyQt6
-- **Аудио**: PyAudio (совместим с PipeWire и PulseAudio)
+- **Аудио**: sounddevice 0.5.6 / PortAudio >=19.6.0,<20; blocking RawInputStream
+  без NumPy. Linux требует системную PortAudio (`libportaudio2`); Windows wheel
+  содержит DLL, но системная библиотека может иметь приоритет. Ошибка финального
+  освобождения backend отключает аудио до перезапуска Typr; native audio smoke
+  на Windows/Linux остается непроверенным.
 - **Низкоуровневый ввод**: evdev / uinput (прямой доступ к устройствам ввода Linux)
 - **Сетевой клиент**: httpx
 - **Clipboard backends**: `wl-clipboard` (Wayland), `xclip`/`xsel` (X11; выбирается автоматически установщиком)

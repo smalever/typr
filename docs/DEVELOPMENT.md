@@ -6,13 +6,17 @@
 
 ## Окружение
 
-Проект требует Python 3.10+ и использует `hatchling`, PyQt6, PyAudio, httpx и evdev
+Проект требует Python 3.10+ и использует `hatchling`, PyQt6, sounddevice 0.5.6, cffi,
+httpx и evdev
 (зависимость evdev ограничена Linux). `install.sh` создает проектное окружение
 `.venv` и устанавливает package в editable mode вместе с dev-зависимостями,
-включая `pytest` и `ruff`. Этапы 1–4 Windows реализованы и прошли независимое review;
-актуальные automation results и package/toolchain blockers приведены в
-[плане Windows](WINDOWS_IMPLEMENTATION_PLAN.md#этап-4--audio-lifecycle-ui-адаптация-запуск-из-venv-и-метаданные-пакета).
-Native gates обеих ОС и выбор релизной minor Python остаются открыты.
+включая `pytest` и `ruff`. Этапы 1–5 Windows реализованы и прошли независимое review.
+Актуальная verification этапа 5: **256 passed, 2 skipped**, scoped ruff, isolated
+sdist/wheel, полная binary-only резолюция, clean install/`pip check` и installed
+imports на существующем CPython 3.15.2 x64 успешны; исторический blocker PyAudio снят.
+Команды, версии и внешние Temp paths приведены в
+[плане Windows](WINDOWS_IMPLEMENTATION_PLAN.md#этап-5--миграция-аудио-подсистемы-на-sounddevice-portaudio-lifecycle-metadata-и-clean-install-gates).
+Native gates обеих ОС и полная релизная квалификация Python остаются открыты.
 
 Для разработки с уже созданным окружением:
 
@@ -43,7 +47,8 @@ tests/test_hotkey_manager.py`. Win32 API здесь полностью mocked: �
 Windows venv использует `Scripts\python.exe`, не Linux `.venv/bin/python`.
 Инструкция wheel/`pip check`/consoleless `typr-gui`/Unicode cwd — в
 [README](../README.md#установка). Не переиспользуйте Linux-only venv на Windows.
-Временный Python 3.15.2 toolchain не подтверждает релизную minor. GUI требует
+Существующий Python 3.15.2 x64 прошел packaging/import gates, но это не полная
+релизная квалификация minor. Новый Python не устанавливался. GUI требует
 отдельного разрешения и не входит в unit-проверки.
 
 ```bash
@@ -98,11 +103,24 @@ bash -n install.sh uninstall.sh
   без QApplication/widgets или native hooks/clipboard/microphone. Targeted stage-4:
   `python -m pytest tests/test_audio_recorder.py tests/test_app.py tests/test_settings_dialog.py tests/test_main.py`.
 - Full suite, build, clean install/pip check выполняются отдельно; команды и результаты
-  финальной verification этапа 4 — в плане Windows. Успешный `pip check` требуется
-  для **полного** package: `--no-deps` install без PyAudio его не заменяет.
-  На доступном Python 3.15.2 PyAudio wheel отсутствует; binary download для Windows
-  x64 Python 3.12 успешен, но не заменяет native clean install/import на этой minor.
+  финальной verification этапа 5 — в плане Windows. Успешный `pip check` требуется
+  для **полного** package: `--no-deps` install его не заменяет. Миграция использует
+  sounddevice==0.5.6 (проверенный private finalizer) и cffi>=2.1.1,<3 (проверенный
+  binary floor целевого Python 3.15 Windows). Linux использует системную PortAudio
+  >=19.6.0,<20. Targeted audio suite дополнительно включает
+  `tests/test_sounddevice_backend.py`: source-loader double проверяет import failures,
+  баланс init/finalization, atexit removal и broken owner без настоящего sounddevice.
+  Единственный owner сохраняет importlib module reference даже при failed import,
+  снимает зарегистрированный handler и вызывает vetted finalizer только в worker
+  под общим lock; ошибка финализации poison-ит owner до перезапуска. `_initialized`
+  не модифицируется приложением. Вызов `import sounddevice` не является безопасной
+  import-пробой: он вызывает native init. Installed probe использует import guard,
+  проверку `sys.modules` и читает source без импорта, без production stubs.
   Native Linux regression и Windows GUI smoke unit-тестами не закрываются.
+- Shell syntax проверен существующим Git Bash 5.3.15 отдельным `bash -n` для каждого
+  script. Это не native Linux shell regression; installer и dry-run не запускались.
+- Wheel evidence этапа 5 относится к реализованному коду и зависимостям до финального
+  docs-only обновления статуса; повторная сборка из-за этого обновления не выполнялась.
 
 ## Ручная Desktop Проверка
 

@@ -712,7 +712,6 @@ case "$DISTRO" in
             "python"
             "python-pip"
             "python-pyqt6"
-            "python-pyaudio"
             "portaudio"
             "base-devel"
         )
@@ -918,7 +917,7 @@ msg install_py "$VENV_DIR"
 "$VENV_PIP" install --upgrade pip
 "$VENV_PIP" install -e "$SCRIPT_DIR[dev]"
 "$VENV_PIP" check
-"$VENV_DIR/bin/python" -c 'from PyQt6 import QtCore, QtGui, QtWidgets; import pyaudio, httpx, websockets, evdev; import typr.__main__'
+"$VENV_DIR/bin/python" -c 'from importlib.metadata import version; from PyQt6 import QtCore, QtGui, QtWidgets; import httpx, websockets, evdev; assert version("sounddevice") == "0.5.6"; import typr.__main__'
 configure_new_gigastt_config
 
 echo
