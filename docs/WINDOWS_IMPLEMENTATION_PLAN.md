@@ -2,9 +2,15 @@
 
 ## Статус и правила исполнения
 
-Этапы 1–4 реализованы, независимое review этапа 4 завершено; доступная финальная
-автоматизация выполнена, но package/import gates заблокированы текущим toolchain
-(точные результаты ниже). Поддержка Windows приложения еще **не готова**. Действующая архитектура
+Этапы 1–4 исторически реализованы на базе PyAudio, независимое review этапа 4 завершено;
+доступная финальная автоматизация этапа 4 выполнена (232 passed, 2 skipped), однако clean full install
+и installed import gates оказались заблокированы отсутствием готовых wheels PyAudio для CPython 3.15.2 x64
+(точные исторические результаты зафиксированы в описании этапа 4 ниже).
+Координатор утвердил архитектурное решение: миграция аудио-подсистемы с `PyAudio` на `sounddevice`
+в рамках нового Этапа 5. Новое решение запланировано, но к его реализации **НЕ приступали**;
+проверены исключительно read-only метаданные пакетов на PyPI, что не является runtime proof.
+Никакая функциональность sounddevice не объявляется реализованной или проверенной.
+Поддержка Windows приложения еще **не готова**. Действующая архитектура
 описана в [ARCHITECTURE.md](ARCHITECTURE.md), правила документации — в [DOCUMENTATION_POLICY.md](DOCUMENTATION_POLICY.md).
 - Агент выполняет только явно порученный этап; наличие плана не разрешает произвольные изменения системы, запуск GUI или commit.
 - Координатор утверждает архитектуру, контракты и зависимости; исполнитель выбирает локальную реализацию в утвержденных границах.
@@ -13,8 +19,8 @@
 
 ## Цель и non-goals
 
-Цель: нативная работа tray-first клиента Typr на **Windows 11 x64** для проверенной minor версии Python (3.12 / поддерживаемая) с сохранением стабильности Linux (Wayland/X11). Формат поставки первого релиза: сборка wheel, чистая установка в `.venv` и запуск через `typr-gui` (или `python -m typr`).
-Non-goals (требуют отдельного решения при необходимости): freezer (PyInstaller/one-dir), инсталлятор (Inno Setup/WiX), генерация `.ico`, PE metadata, цифровая подпись Authenticode / SmartScreen reputation, автозапуск, новый CI, WSL/Docker, локальный STT сервер, эмуляция ввода текста посимвольно, обход UIPI, сложный ACL framework, автомиграция данных и изменение Linux shell-скриптов.
+Цель: нативная работа tray-first клиента Typr на **Windows 11 x64** для существующей целевой minor версии Python (**CPython 3.15.2 x64**, acceptance pending; установка Python 3.12 не требуется) с сохранением стабильности Linux (Wayland/X11). Формат поставки первого релиза: сборка wheel, чистая установка в `.venv` без `--no-deps` и заглушек, запуск через `typr-gui` (или `python -m typr`).
+Non-goals (требуют отдельного решения при необходимости): freezer (PyInstaller/one-dir), инсталлятор (Inno Setup/WiX), генерация `.ico`, PE metadata, цифровая подпись Authenticode / SmartScreen reputation, автозапуск, новый CI, WSL/Docker, локальный STT сервер, эмуляция ввода текста посимвольно, обход UIPI, сложный ACL framework, автомиграция данных и изменение Linux shell-скриптов (за исключением узкой адаптации проверок audio-зависимостей и импортов в `install.sh` под sounddevice).
 
 ## 1. Фактический baseline и подтвержденные пробелы
 
@@ -25,7 +31,7 @@ Non-goals (требуют отдельного решения при необх�
 | **Lifecycle** | `app.py` управляет состояниями `IDLE/RECORDING/TRANSCRIBING/TYPING/ERROR`. В `app.py:334-340` `config.save()` вызывается до `cleanup()` без перехвата `OSError`. | Выбор backend через узкий селектор. Гарантировать `cleanup()` в блоке `finally` при ошибках save/quit; чистый повторный старт backend внутри процесса. |
 | **Hotkeys** | `hotkey_manager.py`: evdev на Linux. В `pyproject.toml:31` evdev указан как безусловная зависимость. Default shortcut `Ctrl+Alt+Z` переносим. | Ограничить evdev маркером `sys_platform == 'linux'`. Windows PTT реализовать через `WH_KEYBOARD_LL` (ctypes). Разбор shortcut через `QKeySequence` PortableText (single chord). |
 | **Injection** | `text_injector.py`: на Linux `UInput`, Shift+Insert, текстовый backup/restore по совпадению строк, синхронные sleep/subprocess. В `app.py:126` и `i18n.py:58,202` зашит Linux-текст `/dev/uinput`. | Windows эмуляция через `SendInput` (ctypes, Ctrl+V). Асинхронный контракт с operation token. Linux блокирующие sleep/helper I/O вынести из Qt path минимально без регрессий. Адаптировать строки в i18n. |
-| **Audio/HTTP** | `audio_recorder.py`: PyAudio/PortAudio, defaults PCM 16kHz mono. `transcriber.py`: общий httpx worker `QThread`. | Общий HTTP transcriber сохранить. Проверить доступность PyAudio wheels для выбранной minor Windows x64. Не блокировать Qt main thread при старте/остановке stream; обработать ошибки микрофона. |
+| **Audio/HTTP** | Исходный baseline: `audio_recorder.py` на PyAudio/PortAudio, PCM 16kHz mono; `transcriber.py` на httpx. На этапе 4 подтверждено отсутствие wheels PyAudio для CPython 3.15.2 x64. | Общий HTTP transcriber сохранить. Координатором утверждена миграция `PyAudio -> sounddevice` (0.5.6) с blocking `RawInputStream` в worker thread и явным управлением PortAudio lifecycle. Не блокировать Qt main thread; нефатальный overflow; clean full install без stubs. |
 | **Persistence** | `config.py` (`~/.config/typr`), `history.py` (`~/.local/share/typr`). Вызовы `open()` без `encoding="utf-8"` (`config.py:110,158`, `history.py:94,117`). `chmod(0600)` не эквивалентен DACL. | Сохранить Linux ТОЧНО прежние пути. На Windows использовать `%LOCALAPPDATA%\Typr`. Явный `encoding="utf-8"` везде. Guard истории после ЛЮБОЙ ошибки чтения от перезаписи. Проверка прав каталога до записи секрета. |
 | **UI/Logs/Tests** | Поле Cancel UI (`settings_dialog.py:426-430`) не подключено к backend. В `settings_dialog.py:438,544` Linux-строки. `logger.py:28-44` пишет HOME при импорте; при consoleless `sys.stdout` может быть `None`. Shell-тесты читают скрипты без UTF-8. | Скрыть/отключить неработающий Cancel UI. Адаптировать Linux-строки. Изолировать пути в тестах ДО импорта модулей; скипать shell-тесты на Windows до чтения ресурсов; fallback логгера при `sys.stdout is None`. |
 
@@ -75,13 +81,20 @@ Non-goals (требуют отдельного решения при необх�
 - Логирование: consoleless fallback при `sys.stdout is None` (`pythonw` / GUI launcher).
 - Жизненный цикл: гарантированный вызов `cleanup()` в блоке `finally` при выходе из приложения даже при ошибках `config.save()` (`OSError`).
 
-### 2.5. Audio и Single-Instance
-- Сохраняются общий `PyAudio` pipeline (PCM 16kHz mono defaults, не жесткая характеристика config) и общий HTTP transcriber.
-- Проверка доступности готовых wheels PyAudio для выбранной minor версии Windows x64.
-- Неблокирующий lifecycle: устранить вызовы open/stop/join из Qt main thread.
-- Локальные state tests: no-device, privacy, default, device removal/recovery, shutdown во время recording/transcribing/typing; cleanup queued work.
-- Тесты быстрого press/release ВО ВРЕМЯ открытия stream, delayed stop/close/error/shutdown.
-- Запуск нескольких экземпляров регламентируется пользовательской инструкцией (системный mutex отложен); чистый повторный запуск backend внутри процесса.
+### 2.5. Audio и Single-Instance (Архитектурный контракт sounddevice)
+- **Исторический контекст PyAudio и новое решение:** исходно планировался `PyAudio`, однако отсутствие бинарных wheels под CPython 3.15.2 Windows x64 заблокировало package gates. Утверждена миграция на `sounddevice` с зависимостью `cffi`. Общий HTTP transcriber (`transcriber.py`) сохраняется без изменений.
+- **Потоковая модель и stream type:** использование исключительно блокирующего `RawInputStream` строго внутри существующего worker рекордера (без добавления сторонних классов потоков). В первой миграции отказ от callbacks в пользу детерминированного blocking read в цикле worker.
+- **Формат данных и отсутствие NumPy:** сохраняются текущий асинхронный фасад `AudioRecorder` и формирование PCM 16-bit WAV стандартными библиотеками Python (`wave`, `struct`). Параметры `sample_rate` и `channels` берутся из `config` (значения 16 kHz и mono являются defaults конфигурации, а не жестким форматом). Вызов `RawInputStream.read(...)` возвращает кортеж `(buffer, overflowed)`; аудио-данные преобразуются через `bytes(buffer)` без требования предварительного выделения буфера; зависимость от `numpy` не добавляется.
+- **Селекция устройств и defaults:** snapshot конфигурации при старте, сопоставление по имени устройства (`exact device name`); детерминированный fallback на системный default применяется исключительно при ненайденном выбранном имени устройства с информативным логированием. Любые ошибки перечисления/запроса (`query_devices`) или открытия потока (`RawInputStream`) возвращаются как явные асинхронные ошибки (сигналы `devices_error`, `recording_error`), без произвольного fallback на default при сбоях обращения к оборудованию.
+- **Политика переполнения (overflow):** флаг `overflowed`, возвращаемый `RawInputStream.read(...)`, обрабатывается нефатально — логируется предупреждение, накопление сэмпла продолжается.
+- **Сериализация PortAudio в процессе:** строгая process-global worker-only сериализация ВСЕХ вызовов PortAudio API (перечисление устройств, инициализация, open, read, stop, close, termination) под общим локом. Никакие PortAudio операции не выполняются в Qt main thread.
+- **Границы жизненного цикла и atexit boundary:** библиотека `sounddevice` выполняет `_initialize()` при импорте модуля и регистрирует `atexit.register(_exit_handler)` (который вызывает `_terminate()`). Простой top-level `import sounddevice` в кодовой базе приложения запрещен: перед реализацией утверждается явное владение init/terminate/error/atexit boundary (deferred worker import под lock). Запрещено обходить контракт monkeypatching приватных переменных/счетчиков (`_initialized`) и недопустимо полагаться на main-thread atexit teardown.
+- **Диагностика ошибок:** вызовы `stop()`, `abort()`, `close()` обязаны явно диагностировать и логировать возникающие исключения; запрещено использовать silent `ignore_errors` defaults.
+- **Expert API и failure paths:** обязательна проверка совместимости версий PortAudio и обработка путей сбоев инициализации нативного бэкенда (Expert API failure paths). Версия `sounddevice` выбирается как проверенная версия или ограниченный диапазон после проверки Expert API; политика версий `sounddevice` и `cffi` будет утверждена по итогам валидации без предварительного pin.
+- **Cleanup predicates и shutdown barrier:** сохранение предикатов фактического завершения потоков (`is_cleanup_complete() -> bool`) и общего неблокирующего shutdown barrier в `TyprApp` (основной audio worker + отставленные worker-потоки Settings + text injector).
+- **Неизменность контракта вставки текста:** token identity, acceptance semantics и подавление late results остаются неизменными; функциональных изменений в `src/typr/core/text_injector.py` и `src/typr/app.py` не планируется.
+- **Локальные state tests:** no-device, privacy, default, device removal/recovery, shutdown во время recording/transcribing/typing; тесты быстрого press/release во время открытия stream, delayed stop/close/error/shutdown.
+- **Single-instance:** запуск нескольких экземпляров приложения регламентируется пользовательской инструкцией (системный mutex отложен); изоляция contention между основным рекордером и временными экземплярами микрофонного теста Settings.
 
 ## 3. Последовательные этапы реализации
 
@@ -239,10 +252,14 @@ Linux native gates, релизная minor Python и stage-4 audio/UI/package н
 - Задачи: вынос блокирующих вызовов Linux sleep/helper I/O из Qt main thread минимально необходимым образом без изменения поведения.
 - Критерии проверки (Gate): тесты контракта, таймаута модификаторов, partial SendInput cleanup, late callback cancellation, регресс Linux helper.
 
-### Этап 4 — Audio lifecycle, UI адаптация, запуск из venv и метаданные пакета
+### Этап 4 — Audio lifecycle, UI адаптация, запуск из venv и метаданные пакета (Историческая реализация PyAudio)
 
-**Статус (2026-11-03): implemented + independent review completed; доступная
-автоматизация завершена, clean full install/import gates заблокированы Python 3.15.2.**
+**Статус (2026-11-03): историческая реализация на базе PyAudio завершена, independent review пройдено;
+доступная автоматизация завершена (232 passed, 2 skipped), однако clean full install/import gates
+заблокированы отсутствием wheels PyAudio для Python 3.15.2.**
+*Примечание координатора:* Данные проверки, таблицы и команды ниже относятся строго
+к исторической реализации на базе библиотеки PyAudio. Они сохраняются в неизменном виде как
+историческое свидетельство и НЕ являются проверкой или доказательством работоспособности sounddevice.
 Принятый AudioRecorder использует worker-owned PortAudio с общей для процесса
 сериализацией lifecycle PortAudio, async stop/results/device enumeration и terminal
 nonblocking cleanup с actual-exit predicates. Settings refresh и microphone test
@@ -350,22 +367,77 @@ SemVer bump/commit/push и install.sh не выполнялись.
 - Задачи: подсказка о буфере обмена в Settings; гарантированный `cleanup()` в `finally` при выходе из `app.py`; Windows classifier в `pyproject.toml` (без bump).
 - Критерии проверки (Gate): тесты UI, audio и app; чистая сборка wheel (`python -m build`), `pip check`, установка в `.venv` и запуск `typr-gui` без консоли из cwd с Unicode.
 
+### Этап 5 — Миграция аудио-подсистемы на sounddevice (PortAudio lifecycle, metadata и clean install gates)
+
+**Статус: запланирован / утверждено координатором; к реализации НЕ приступали; acceptance pending.**
+Никакой код этапа 5 еще не реализован и не объявляется прошедшим проверку.
+Миграция утверждена координатором для разблокирования сборки и чистой установки под существующий
+интерпретатор **CPython 3.15.2 x64** на Windows 11 без необходимости установки Python 3.12.
+
+#### Обоснование и статус метаданных зависимостей (Read-Only)
+Проверена доступность готовых бинарных wheels на PyPI (источники: PyPI [sounddevice 0.5.6](https://pypi.org/project/sounddevice/0.5.6/), [cffi 2.1.1](https://pypi.org/project/cffi/2.1.1/), а также официальная документация [sounddevice 0.5.6 installation](https://python-sounddevice.readthedocs.io/en/0.5.6/installation.html), [raw streams](https://python-sounddevice.readthedocs.io/en/0.5.6/api/raw-streams.html) и [expert mode](https://python-sounddevice.readthedocs.io/en/0.5.6/api/expert-mode.html)):
+- `sounddevice 0.5.6`: доступен wheel `sounddevice-0.5.6-py3-none-win_amd64.whl` (Requires-Python: `>=3.7`), включающий предкомпилированную DLL PortAudio для Windows x64;
+- `cffi 2.1.1`: доступен wheel `cffi-2.1.1-cp315-cp315-win_amd64.whl` (Requires-Python: `>=3.10`) под целевую архитектуру CPython 3.15 Windows x64.
+*Ограничение проверки:* Проверка метаданных на PyPI подтверждает наличие пакетов, но **НЕ является runtime proof** (фактическая загрузка DLL, совместимость с CRT и корректность работы с аудиоустройствами требуют проверки исполнением в окружении).
+
+#### Архитектурный контракт и правила реализации
+Реализация этапа 5 строго следует утвержденному контракту подраздела [2.5](#25-audio-и-single-instance-архитектурный-контракт-sounddevice):
+- Изоляция жизненного цикла sounddevice: запрет top-level import, утверждение явного владения `init/terminate/error/atexit` boundary (с учетом регистрации `atexit.register(_exit_handler)`), запрет monkeypatching `_initialized` и запрет неявного teardown в main thread.
+- Потоковая модель: только существующий worker, блокирующий `RawInputStream.read(...)` возвращает `(buffer, overflowed)`, данные берутся через `bytes(buffer)`, нефатальная обработка `overflowed`, без callbacks в первой миграции.
+- Формат: PCM 16-bit, `sample_rate` и `channels` из `config` (16 kHz mono только defaults), запись без `numpy`.
+- Устройства и ошибки: snapshot config, exact device name, детерминированный fallback на default только при ненайденном имени; ошибки query/open возвращаются как явные асинхронные ошибки (`devices_error`, `recording_error`).
+- Синхронизация и барьеры: process-global worker-only lock для всех PortAudio вызовов; сохранение фактических сигналов фасада (`audio_ready`, `audio_chunk`, `recording_error`, `level_changed`, `devices_ready`, `devices_error`), предикатов `is_cleanup_complete()` и общего shutdown barrier (main audio + Settings retired workers + injector).
+- Неизменность контракта вставки: token identity, acceptance semantics, late result filtering без функциональных правок `text_injector.py` и `app.py`.
+
+#### Область будущей реализации
+- Код: `src/typr/core/audio_recorder.py` (и возможный узкий backend после утверждения lifecycle). Функциональные изменения `src/typr/app.py`, `src/typr/ui/settings_dialog.py`, `src/typr/core/text_injector.py` не планируются без крайней необходимости.
+- Метаданные и зависимости: `pyproject.toml` (удаление `pyaudio` и `types-pyaudio`; добавление проверенной версии или ограниченного диапазона `sounddevice` после проверки Expert API; политика версий `sounddevice` и `cffi` без предварительного pin).
+- Инсталлятор Linux: `install.sh` (узкая адаптация проверок зависимостей и импортов под `sounddevice` с сохранением системных библиотек PortAudio `libportaudio2` для Linux; запуск инсталлятора запрещен).
+- Тесты: `tests/test_audio_recorder.py`, `tests/test_app.py`, `tests/test_settings_dialog.py`.
+- Документация: `README.md`, `docs/ARCHITECTURE.md`, `docs/DEVELOPMENT.md`, `docs/WINDOWS_IMPLEMENTATION_PLAN.md`.
+
+#### Программа тестирования (Tests)
+- First import/init/termination under lock: проверка первого импорта и инициализации/деинициализации PortAudio строго внутри существующего worker под блокировкой.
+- Cross-instance contention: взаимное исключение операций PortAudio между основным `AudioRecorder` и экземпляром теста микрофона в `SettingsDialog`.
+- Cancellation lifecycle: отмена записи до открытия стрима, во время `open`/`start` и во время ожидания `read`.
+- Read / errors / overflow: обработка ошибок чтения устройства, нефатальное логирование флага переполнения (`overflowed`), валидность PCM 16-bit WAV данных под параметры из `config`.
+- Device enumeration: перечисление устройств по умолчанию и при отключении/смене девайса без блокировки Qt main thread.
+- Teardown failures & actual exit: обработка сбоев при `close()`/деинициализации, проверка предикатов `is_cleanup_complete()` и фактического завершения worker-потоков.
+- Shutdown barrier regressions: регрессионные тесты ожидания завершения работы приложения с учетом отставленных потоков Settings и рекордера.
+- Token regressions: проверка неизменности семантики operation token в `TextInjector` при изоляции audio lifecycle.
+
+#### Критерии проверки и ворота готовности (Gates этапа 5)
+1. **Full binary resolution:** успешная бинарная резолюция и загрузка wheels для ВСЕГО графа runtime-зависимостей приложения под CPython 3.15.2 Windows x64.
+2. **Metadata verification:** проверка построенного wheel на полное отсутствие `pyaudio` и `types-pyaudio` в `Requires-Dist`.
+3. **Isolated package build:** чистая сборка sdist и wheel через `python -m build` в изолированном окружении.
+4. **Clean external venv install:** успешная полная установка полученного wheel в чистый внешний Windows venv без ключа `--no-deps` и без runtime-заглушек.
+5. **Pip check:** `pip check` завершается успешно с кодом 0 (отсутствие неразрешенных зависимостей во всем графе).
+6. **Installed imports test:** успешный импорт `typr.app` и `typr.__main__` в установленном пакете из каталога с пробелами и Unicode-символами в пути, при полностью удаленной переменной окружения `PYTHONPATH` и изолированных каталогах `HOME`, `USERPROFILE`, `LOCALAPPDATA`.
+7. **No hardware on import:** чистый импорт модулей не должен вызывать обращений к PortAudio API, инициализации аудио-бэкенда или захвата аудиоустройств.
+8. **Открытые проверки:** реальное тестирование PortAudio DLL, запись с физического микрофона и натурный smoke test требуют отдельного разрешения пользователя.
+
 ## 4. Чеклист верификации и критерий готовности
 
 ### 4.1. Автоматизированные проверки
-- Чистая сборка `python -m build`, чистая установка wheel в `.venv`, `pip check`.
+- Чистая изолированная сборка `python -m build`, чистая установка wheel в чистый внешний `.venv` без `--no-deps` и runtime-заглушек, успешный `pip check`.
+- Installed imports (`typr.app`, `typr.__main__`) из рабочей директории с Unicode и пробелами в пути с изолированным профилем и удаленным `PYTHONPATH`. Импорты не должны обращаться к железу или инициализировать PortAudio.
 - Полный applicable `pytest` на обеих ОС (с пропуском shell-тестов на Windows); `ruff check` для измененных файлов Python.
 
-### 4.2. Натурный Smoke Checklist
+### 4.2. Натурный Smoke Checklist (требует отдельного разрешения)
 - Windows 11: старт `typr-gui` без консоли из cwd с Unicode/пробелами в пути; tray/settings/history; дефолтный `Ctrl+Alt+Z`.
-- Windows 11: PTT запись (быстрый клик, длинное удержание, игнор duplicate down, lock/unlock, RU/EN раскладки, AltGr, release модификаторов).
+- Windows 11: PTT запись через sounddevice (быстрый клик, длинное удержание, игнор duplicate down, lock/unlock, RU/EN раскладки, AltGr, release модификаторов).
 - Windows 11: вставка Unicode через Ctrl+V в обычные приложения; текст в буфере, транскрипция в истории; корректный выход без зависших потоков/хуков.
 - Linux: базовый нативный регресс Wayland и X11 (PTT через evdev, uinput вставка, восстановление через wl-copy/xclip, shell tests).
 
-### 4.3. Критерий готовности
+### 4.3. Критерий готовности и открытые ворота
 - Поддержка принимается только если согласованные contracts реализованы, applicable automation и desktop smoke пройдены на обеих ОС без прав admin.
 - Пользовательские данные и секреты сохранены, UI остается отзывчивым, непроверенное честно указано в отчете.
 - Hardware/GUI проверки требуют отдельного разрешения, тестового endpoint и фиктивных секретов.
+- Открыты на Linux: полный applicable suite, installer shell checks, native audio, evdev, uinput, Wayland/X11 clipboard regressions.
+- Открыты на Windows: low-level keyboard hooks, session reset/lock/unlock, SendInput, clipboard policy, ACL positive acceptance.
+- Открыты на Windows: audio devices enumeration/privacy/removal/recovery и shutdown с реальными устройствами.
+- Открыты на Windows: Windows 11 GUI/consoleless launch из Unicode+spaces cwd, tray/settings/history, сквозная транскрипция с тестовым endpoint.
+- Действуют строгие ограничения: запрещена установка новых версий Python без согласования, запрещены несанкционированные GUI и hardware тесты, запрещены git commit и git push.
 
 ## 5. Отложенные задачи (Deferred)
 
