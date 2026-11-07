@@ -1,4 +1,4 @@
-# Development
+﻿# Development
 
 ## Назначение
 
@@ -11,19 +11,27 @@ httpx и evdev
 (зависимость evdev ограничена Linux). `install.sh` создает проектное окружение
 `.venv` и устанавливает package в editable mode вместе с dev-зависимостями,
 включая `pytest` и `ruff`. Этапы 1–5 Windows реализованы и прошли независимое review.
-Актуальная verification этапа 5: **256 passed, 2 skipped**, scoped ruff, isolated
-sdist/wheel, полная binary-only резолюция, clean install/`pip check` и installed
-imports на существующем CPython 3.15.2 x64 успешны; исторический blocker PyAudio снят.
+Текущий верификационный статус Windows: полный набор с тестами установщика — **284 passed, 2 skipped** (предыдущий baseline: 280 passed, 2 skipped),
+scoped ruff; чистая установка (clean install) пересобранного wheel (`typr-0.4.0-py3-none-any.whl`)
+с `pip check` и изолированными import probes завершена успешно (**PASS**). Модуль локального GigaSTT
+проверен в натурном режиме (**live module PASS**): контейнер и том созданы, эндпоинты `/ready` и
+`/health` (модель `gigaam-v3-rnnt`, вариант `rnnt`) готовы, транскрипция синтетического аудио через
+QCoreApplication выполнена без GUI/микрофона с чистым завершением потока.
+Сборка полного автономного архива (full ZIP payload) через `Build-Payload.ps1` завершена успешно (**PASS**, сформирован итоговый архив `Typr-Windows-x64-20261107-final.zip` после исправления ошибки установки `LastWriteTime` для zip-записей): этапы сборки актуального wheel, развертывания runtime, `pip check` (полный граф зависимостей wheelhouse) и `Verify-Runtime.py` пройдены.
+Релизная квалификация установщика и CPython 3.15.2 сохраняет статус **OPEN**, а натурный desktop smoke
+в изолированном harness — статус gate 8 **PARTIAL / OPEN** (не заменен, полная готовность / PASS не заявляется).
+Исторический blocker PyAudio снят.
 После этапа 5 проведена санкционированная частичная нативная верификация Windows
 (desktop smoke) на существующем установленном runtime этапа 5 в изолированном профиле без
-сетевого endpoint; нативный gate 8 перешел в статус **PARTIAL / OPEN**. Обычный запуск успешен
+сетевого endpoint; нативный gate 8 перешел в статус **PARTIAL / OPEN** (не заменен). Обычный запуск успешен
 (exit 0) с реальной записью звука в память (~2 с), хуками `WH_KEYBOARD_LL`, SendInput
 в собственное окно и чистым выходом; consoleless-запуск через `pythonw.exe` завершился с
 exit 1 из-за таймаута фокуса окна (точная причина не установлена, ограничения Windows — возможная
 причина; injection не запускался, SendInput предотвращен focus guard, production-дефект не подтвержден).
 Подробности, результаты и команды приведены в
 [плане Windows](WINDOWS_IMPLEMENTATION_PLAN.md#частичная-нативная-verification-windows-post-stage-5-2026-11-04).
-Native gates обеих ОС и полная релизная квалификация Python остаются открыты.
+Native gates обеих ОС и полная релизная квалификация Python/установщика остаются в статусе **OPEN**
+до независимого review и сквозной натурной приемки.
 
 Для разработки с уже созданным окружением:
 
@@ -64,6 +72,66 @@ Windows venv использует `Scripts\python.exe`, не Linux `.venv/bin/py
 ```
 
 Запуск требует desktop session, system tray, microphone, clipboard utility, доступ к `/dev/input/event*` и `/dev/uinput`. Отсутствие этих ресурсов в CI не должно маскироваться production fallback-кодом.
+
+## Сборка офлайн-пакета Windows (Build-Payload.ps1)
+
+Для формирования автономного офлайн-установщика Typr под Windows 11 x64 используется скрипт `scripts/windows/Build-Payload.ps1`. Сборка выполняется в изолированном временном каталоге и не модифицирует окружение разработчика.
+
+### Требования к сборочному окружению (Developer Build Prerequisites)
+
+Перед сборкой офлайн-пакета необходимо подготовить следующие компоненты:
+1. **Сборочный интерпретатор CPython 3.15.2 x64 (`$BuildPython`):**
+   - Строго CPython 3.15.2 win32 AMD64.
+   - В окружении должны быть установлены `pip` и сборочный бэкенд `hatchling` (сборщик компилирует свежий wheel Typr из репозитория через `pip wheel --no-index --no-deps --no-build-isolation`).
+2. **Официальный архив embed-дистрибутива Python (`$EmbedZip`):**
+   - Файл официального дистрибутива `python-3.15.2-embed-amd64.zip`.
+   - Обязательный входной параметр контрольной суммы (`$EmbedSha256`):
+     `d012f3aa29cf07436dae8aea1fec0fd195c2612a0b059b1f915ae0afb9ad1f62`.
+   - При несовпадении SHA256 сборка немедленно прерывается.
+3. **Каталог бинарных зависимостей (`$Wheelhouse`):**
+   - Каталог, содержащий предварительно подготовленные бинарные wheels для CPython 3.15.2 (win_amd64) для всех runtime-зависимостей Typr (PyQt6, sounddevice, cffi, httpx и др.).
+   - **Обязательно включение wheel самого `pip`** в wheelhouse (требуется для развертывания зависимостей в целевую директорию `Lib\site-packages` встроенного runtime).
+4. **Манифест wheelhouse (`$WheelhouseManifest`):**
+   - JSON-файл со схемой:
+     ```json
+     {
+       "schema": 1,
+       "files": [
+         {
+           "path": "имя_пакета.whl",
+           "sha256": "64_символьный_hex_sha256"
+         }
+       ]
+     }
+     ```
+   - Манифест должен перечислять исключительно файлы с расширением `.whl`. Скрипт проверяет совпадение SHA256 каждого файла и блокирует сборку при наличии неподтвержденных файлов или расхождений.
+
+### Команда сборки
+
+Запуск сборщика выполняется из PowerShell 5.1 с актуальными именами параметров:
+
+```powershell
+& ".\scripts\windows\Build-Payload.ps1" `
+    -BuildPython "C:\path\to\CPython315\python.exe" `
+    -EmbedZip "C:\path\to\python-3.15.2-embed-amd64.zip" `
+    -EmbedSha256 "d012f3aa29cf07436dae8aea1fec0fd195c2612a0b059b1f915ae0afb9ad1f62" `
+    -Wheelhouse "C:\path\to\wheelhouse" `
+    -WheelhouseManifest "C:\path\to\wheelhouse.json" `
+    -OutputZip "C:\path\to\Typr-0.4.0-win64.zip"
+```
+
+*Примечание:* в стандартном сценарии разработчика реальные команды загрузки из сети не выполняются: все артефакты подготавливаются локально и валидируются по хэшам. Переключатель `-DownloadEmbed` опционален и запрашивает интерактивное подтверждение при необходимости скачивания официального архива Python с проверкой SHA256.
+
+### Состав и валидация сформированного пакета
+
+Сформированный архив содержит каталог `Typr/` со следующей структурой:
+- `runtime/` — распакованный автономный CPython 3.15.2 с настроенным файлом `python315._pth` (`Lib\site-packages` и директива `import site`);
+- `runtime/Lib/site-packages/` — установленный свежий wheel Typr и полный граф бинарных зависимостей, прошедший проверку `pip check` и импорты `Verify-Runtime.py` (с изоляцией и запретом прямой нативной инициализации sounddevice/PortAudio);
+- `Install.bat`, `Uninstall.bat`, `Install.ps1`, `TyprInstaller.ps1`, `Initialize-Config.py`;
+- `LICENSE` и лицензии dist-info установленных пакетов;
+- `payload.json` — манифест инвентаря со списком всех файлов и их SHA256 (`qualification = 'OPEN'`).
+
+Сборка полного автономного ZIP-пакета сборщиком `Build-Payload.ps1` завершена успешно (**PASS**, сформирован итоговый архив `Typr-Windows-x64-20261107-final.zip` размером 105 245 862 байт, SHA-256 `9c5e3614a3e09da58b2411c09a8ad6830e972d58722041734f7bf79d7286aaef` после устранения ошибки установки таймстемпов записей архива): этапы сборки актуального wheel Typr, развертывания embeddable runtime CPython 3.15.2, чистой офлайн-установки полного графа зависимостей wheelhouse, `pip check` и изоляции импортов `Verify-Runtime.py` проходят штатно. Релизная квалификация CPython 3.15.2 и установщика сохраняет статус **OPEN**: сквозная натурная приемка на чистой системе Windows 11 x64 ожидает выполнения.
 
 ## Проверки
 
@@ -132,7 +200,8 @@ bash -n install.sh uninstall.sh
 - Частичная нативная верификация Windows (post-stage 5 desktop smoke): натурный
   smoke выполнен в изолированном harness без endpoint на runtime этапа 5; native
   gate 8 находится в статусе **PARTIAL / OPEN**. Продакшен-лаунчер `typr-gui.exe`
-  не принят; baseline tests (256 passed, 2 skipped) не повторялся; production-код не менялся.
+  не принят; актуальные результаты этапа 6 и открытые ворота приведены во введении и в
+  [плане Windows](WINDOWS_IMPLEMENTATION_PLAN.md#этап-6--автономный-per-user-инсталлятор-windows-11-x64-и-интеграция-локального-docker-stt).
   Канонические свидетельства, команды и результаты прогонов — в
   [плане Windows](WINDOWS_IMPLEMENTATION_PLAN.md#частичная-нативная-verification-windows-post-stage-5-2026-11-04).
 

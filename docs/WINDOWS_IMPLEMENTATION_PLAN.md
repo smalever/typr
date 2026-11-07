@@ -1,10 +1,20 @@
-# План реализации поддержки Windows 11
+﻿# План реализации поддержки Windows 11
 
 ## Статус и правила исполнения
 
-**Текущий статус (2026-11-04): этапы 1–5 реализованы (gates 1–7 PASS); выполнены частичная нативная верификация Windows (desktop smoke и launcher-ворота L/R/T), native gate 8 находится в статусе PARTIAL / OPEN; в production-коде устранен подтвержденный дефект жизненного цикла транскрибера (FLS exit probe / barrier), новый baseline тестов — 280 passed, 2 skipped.**
+**Текущий статус (2026-11-07): этапы 1–5 реализованы (gates 1–7 PASS); выполнены частичная нативная верификация Windows (desktop smoke и launcher-ворота L/R/T), native gate 8 находится в статусе PARTIAL / OPEN; baseline тестов исходного кода — 280 passed, 2 skipped.**
+По явному разрешению пользователя утверждено санкционированное расширение границ поставки Windows: автономный per-user инсталлятор для **Windows 11 x64** без требования предустановленного Python (ZIP-пакет `Install.bat` + `Uninstall.bat` + мастер установки `Install.ps1` на Windows PowerShell 5.1 + offline CPython 3.15.2 embeddable amd64 runtime с wheel-пакетами Typr и зависимостей в `%LOCALAPPDATA%\Programs\Typr`) и интеграция локального STT в Docker (выбор Parakeet / GigaSTT на loopback). Это новое утвержденное продолжение (этап 6), а не повтор этапов 1–5.
+Реализация скриптов поставки в `scripts/windows` подготовлена (`Install.bat`, `Uninstall.bat`, `Install.ps1`, `TyprInstaller.ps1`, `Build-Payload.ps1`, `Verify-Runtime.py`, `Initialize-Config.py`). Независимое ревью выявило замечания (обработка потока stderr Docker CLI, транзакционное возобновление/откат установки и удаления с проверкой нативной идентичности каталога через Win32 handle, защита от оставшихся scratch-файлов JSON, ошибка сборщика ZIP-архивов `LastWriteTime` setter), которые полностью устранены; повторное независимое ревью подтвердило исправление всех замечаний (targeted pytest: 4 passed за 11.02 с); итоговый ZIP-пакет успешно собран. Статус релиза: в процессе квалификации (автоматизированная сборка снепшота проверена; натурная приемка на чистой ОС ожидает выполнения).
+Актуальные доказательства верификации:
+- Финальный полный pytest с тестами установщика: **284 passed, 2 skipped**; scoped Ruff и PowerShell parser — PASS. Все 4456 файлов итогового payload сверены по SHA-256. Установка во временный каталог, встроенный `pip check`, guarded imports, создание свежей конфигурации GigaSTT с private ACL и безопасное удаление с сохранением соседних данных — PASS. Реальные Start Menu/Startup и чистая Windows этим не проверены.
+- Новый source wheel `typr-0.4.0-py3-none-any.whl` с исправлением барьера транскрибера пересобран и прошел полную чистую офлайн-установку полного набора бинарных зависимостей, `pip check` (exit 0) и guarded imports (`typr.app`, `typr.__main__`) в Unicode+spaces каталоге с изолированным профилем и проверкой отсутствия неконтролируемой загрузки sounddevice в `sys.modules`.
+- Проведена сквозная верификация WhisperTranscriber на новом установленном рантайме через `QCoreApplication` с синтетическим in-memory WAV (тишина 1.5 с, 16 кГц, PCM16) против реального локального HTTP-сервиса GigaSTT: получен HTTP 200, транскрипция завершена (длина 0), нативный поток ОС подтвержден завершенным через `WaitForSingleObject` дескриптора потока Win32, дескриптор закрыт, `is_cleanup_complete() == True` (PASS). Это подтверждает работоспособность связки реального HTTP и нативного FLS exit probe без привлечения микрофона, GUI, хуков или буфера обмена.
+- Развернут локальный сервис GigaSTT (pinned digest `sha256:ac7f7ccb7d5b9628d9e16cc361f29e61beedd8e1df8b0927b4a17921b7ec2f35`, v2.22.0): создан собственный контейнер `typr-win-<SID>-gigastt` с именованным Docker-томом моделей `typr-win-<SID>-gigastt-models` на loopback `127.0.0.1:9876`, подтверждена готовность `/ready` 200 и `/health` 200 (модель `gigaam-v3-rnnt`, вариант `rnnt`), повторный запуск переиспользует тот же контейнер без повторных скачиваний.
+- Сборщик `Build-Payload.ps1`: автоматизированная сборка снепшота завершена успешно (**Gate 6.1 PASS**; сформирован итоговый архив `Typr-Windows-x64-20261107-final.zip` размером 105 245 862 байт, SHA-256 `9c5e3614a3e09da58b2411c09a8ad6830e972d58722041734f7bf79d7286aaef`): пересборка актуального wheel, развертывание embed-рантайма CPython 3.15.2, чистая офлайн-установка полного графа зависимостей wheelhouse, `pip check` и изоляция импортов `Verify-Runtime.py` пройдены.
+- Локальный STT: скачивание архива исходников Parakeet по коммиту `06464cd06a0f75426ce46e94c2d04ee7e26f48c0` и хэшу `fa58716020a9a95d4b6695f6b0a5466f064d1b3719dd6db071f058fc3ffbbc90` верифицировано (только скачивание без сборки образа); для контейнеров STT действует политика `--restart no`, автозапуск Typr не запускает Docker/STT.
+- Native Gate 8 PARTIAL/OPEN и все открытые hardware/production/Linux/release gates остаются неизменными.
 По явному разрешению пользователя проведен санкционированный натурный smoke (реальный микрофон, GUI, хуки `WH_KEYBOARD_LL`, SendInput Unicode paste в собственный `QTextEdit` с focus guard) в изолированном профиле без сетевого endpoint на существующем установленном runtime этапа 5 (CPython 3.15.2 x64, wheel 0.4.0, sounddevice 0.5.6, cffi 2.1.1, PyQt6 6.12.0).
-В обычном запуске получен полный PASS (exit 0): реальная нативная запись WAV в памяти (~2 с), регистрация/снятие хуков, зарегистрированный Ctrl+V-зонд не выдал PTT при синтетической вставке (доставка и фильтрация synthetic events непосредственно не наблюдались), успешная вставка в собственное окно и чистый выход всех воркеров.
+В обычном запуске получен полный PASS (exit 0): реальная нативная запись WAV в памяти (~2 с), регистрация/снятие хуков, зарегистрированный Ctrl+V-зонд не выдал PTT при синтетической вставке (доставка и фильтрация synthetic events непосредственно не наблюдались), успешная вставка в собственный экран и чистый выход всех воркеров.
 В consoleless-запуске (`pythonw.exe`) зафиксирован таймаут ожидания фокуса окна вставки (`fg_own=false, pid_own=false, qtactive/focusOwn/visible=true`, exit 1); точная причина таймаута не установлена (ограничения Windows — возможная причина), injection не запускался (focus guard предотвратил SendInput), остальные компоненты и cleanup прошли штатно; production-дефект не подтвержден.
 На том же СТАРОМ существующем установленном runtime этапа 5 (`typr-gui.exe`, wheel 0.4.0, без нового source fix) нативные ворота лаунчера **L/R/T завершились PASS (exit 0)** через изолированный child-only bootstrap (`PYTHONPATH`/`sitecustomize.py`), настоящий `main`/`start`/`quit`/`_cleanup` и `DETACHED_PROCESS` без перенаправления stdout/stderr (наблюдены `sys.stdout`/`sys.stderr is None` до импорта, во время работы и при выходе; штатный FileHandler изолирован, console handler отсутствует):
 - **L (idle launcher):** штатный старт, трей видим, хук зарегистрирован, изолированный config сохранен, выход по сигналу трея -> чистый выход всех воркеров.
@@ -18,10 +28,10 @@
 - Реализовано исправление: воркер до HTTP открывает собственный `SYNCHRONIZE` thread HANDLE через `OpenThread`; `TranscriberWorker` испускает раздельные worker-сигналы `result`/`error`, фасад удерживает outcome до закрытия клиента и выхода потока; таймер (10 мс) опрашивает OS-хэндл (`WaitForSingleObject == WAIT_OBJECT_0`) перед закрытием хэндла и публикацией наружу; добавлены защита от busy/reentrant, терминальный cleanup с подавлением поздних результатов и включение `self.transcriber.is_cleanup_complete()` в барьер выхода `TyprApp`.
 - Для Linux задокументирован контракт `wait(0)`, но нативная приемка Linux остается **OPEN**. Ошибки `OpenThread` и probe приводят к fail-closed блокировке shutdown; сбой `CloseHandle` логирует утечку без срыва барьера. HTTP payload, endpoint и timeouts не менялись, принудительного kill нет.
 - Актуальный набор тестов исходного кода через существующий изолированный `verify_tests.py` составляет **280 passed, 2 skipped** (Linux installer shell tests), scoped ruff и diff clean. Независимое general-deep review подтвердило отсутствие замечаний (targeted suite: **54 passed за 1.49 с**, включая реальные held FLS тесты обычного пути и cleanup). Предыдущий blocker `WinError 32` при сканировании корня снят запуском pytest из внешнего temp cwd с абсолютными флагами `--rootdir`, `--confcutdir`, `--import-mode=importlib`.
-- **Критическая граница:** установленный wheel этапа 5 НЕ пересобирался после исправления транскрибера, поэтому пакетная и нативная приемка нового fix полного приложения остается **OPEN**; юнит-тесты на `QCoreApplication` с fake HTTP не заменяют реальный endpoint и нативный GUI.
+- **Критическая граница (историческая):** установленный wheel этапа 5 исходно не пересобирался сразу после исправления транскрибера. **Актуальный статус:** новый source wheel `typr-0.4.0-py3-none-any.whl` успешно пересобран и прошел полную чистую установку с 14 зависимостями, pip check и guarded imports; сквозной HTTP-вызов транскрибера на тишине подтвердил native thread exit probe. Пакетная сборка проверена, сквозная нативная приемка полного GUI-приложения остается **OPEN**.
 - Исторические срезы: baseline этапа 4 (**232 passed, 2 skipped**), baseline этапа 5 (**256 passed, 2 skipped**) сохраняются как история и не переписываются.
 - Blocker packaging/import на 3.15.2 снят этапом 5, но это не полная релизная квалификация minor.
-- Поддержка Windows приложения еще **не готова**: сквозная транскрипция с endpoint, физический PTT, раскладки/AltGr, lock/unlock, privacy/unplug recovery, uninstrumented production launcher (`typr-gui.exe`), пересборка wheel под новый код транскрибера, полная релизная квалификация Python и Linux gates остаются открытыми. Действующая архитектура описана в [ARCHITECTURE.md](ARCHITECTURE.md), правила документации — в [DOCUMENTATION_POLICY.md](DOCUMENTATION_POLICY.md).
+- Поддержка Windows приложения еще **не готова**: сквозная транскрипция с endpoint в GUI, физический PTT, раскладки/AltGr, lock/unlock, privacy/unplug recovery, uninstrumented production launcher (`typr-gui.exe`), полная релизная квалификация Python, Linux gates, а также автономный инсталлятор и локальный Docker STT остаются открытыми. Действующая архитектура описана в [ARCHITECTURE.md](ARCHITECTURE.md), правила документации — в [DOCUMENTATION_POLICY.md](DOCUMENTATION_POLICY.md).
 - Агент выполняет только явно порученный этап; наличие плана не разрешает произвольные изменения системы, запуск GUI или commit.
 - Координатор утверждает архитектуру, контракты и зависимости; исполнитель выбирает локальную реализацию в утвержденных границах.
 - У каждого файла один писатель. Этапы выполняются строго последовательно с приемкой; review — в режиме read-only.
@@ -29,8 +39,23 @@
 
 ## Цель и non-goals
 
-Цель: нативная работа tray-first клиента Typr на **Windows 11 x64** для существующей целевой minor версии Python (**CPython 3.15.2 x64**, packaging/import verified, native/release acceptance pending; установка Python 3.12 не требуется) с сохранением стабильности Linux (Wayland/X11). Формат поставки первого релиза: сборка wheel, чистая установка в `.venv` без `--no-deps` и заглушек, запуск через `typr-gui` (или `python -m typr`).
-Non-goals (требуют отдельного решения при необходимости): freezer (PyInstaller/one-dir), инсталлятор (Inno Setup/WiX), генерация `.ico`, PE metadata, цифровая подпись Authenticode / SmartScreen reputation, автозапуск, новый CI, WSL/Docker, локальный STT сервер, эмуляция ввода текста посимвольно, обход UIPI, сложный ACL framework, автомиграция данных и изменение Linux shell-скриптов (за исключением узкой адаптации проверок audio-зависимостей и импортов в `install.sh` под sounddevice).
+Цель: нативная работа tray-first клиента Typr на **Windows 11 x64** для существующей целевой minor версии Python (**CPython 3.15.2 x64**, packaging/import verified, native/release acceptance pending; установка Python 3.12 не требуется) с сохранением стабильности Linux (Wayland/X11).
+Формат поставки расширен по утвержденному решению: автономный per-user инсталлятор без требования наличия предустановленного Python (ZIP-пакет `Install.bat` + мастер установки Windows PowerShell 5.1 + offline embeddable runtime CPython 3.15.2 x64 с предсобранными wheels Typr и зависимостей с установкой в `%LOCALAPPDATA%\Programs\Typr` и сохранением данных в `%LOCALAPPDATA%\Typr`) и поддержка локального Docker STT (Parakeet / GigaSTT на loopback). Чистая установка wheel в `.venv` сохраняется как базовый пакетный контракт.
+
+Обновленные Non-goals (переход в скоуп и остающиеся ограничения):
+- Разрешено и переведено в утвержденный объем: автономный per-user инсталлятор (ZIP bundle `Install.bat` + PS 5.1 wizard) без зависимости от системного Python.
+- Разрешено и переведено в утвержденный объем: опциональный автозапуск через ярлык в пользовательской папке Startup (строго с явного подтверждения пользователя, без записи в реестр).
+- Разрешено и переведено в утвержденный объем: локальный STT в Docker (выбор Parakeet / GigaSTT, строго на loopback-интерфейсе `127.0.0.1`).
+- Non-goal: сторонний freezer (PyInstaller/one-dir bundle) и внешние системы сборки инсталляторов (Inno Setup / WiX) — не требуются благодаря поставке официального embeddable runtime ZIP.
+- Non-goal: автозапуск через реестр Windows (HKCU/HKLM Run keys).
+- Non-goal: требование новой minor-версии Python (сохраняется CPython 3.15.2 x64).
+- Non-goal: генерация `.ico`, PE metadata (file/product version), цифровая подпись Authenticode / SmartScreen reputation.
+- Non-goal: новый CI.
+- Non-goal: удаленный доступ к демону Docker (запрещен; разрешен только локальный Docker на `127.0.0.1`), перехват сторонних/конфликтующих контейнеров.
+- Non-goal: скрытые изменения настроек WSL или Docker Engine без подтверждения.
+- Non-goal: посимвольная эмуляция ввода текста, обход UIPI / ввод в privileged/elevated окна и Secure Desktop/UAC.
+- Non-goal: сложный ACL framework (сохраняются существующие проверки DACL профиля).
+- Non-goal: автомиграция данных и изменение Linux shell-скриптов (за исключением уже выполненной узкой адаптации проверок audio-зависимостей и импортов в `install.sh` под sounddevice).
 
 ## 1. Исторический baseline до этапов 1–5 и исходные пробелы
 
@@ -105,6 +130,18 @@ Non-goals (требуют отдельного решения при необх�
 - **Неизменность контракта вставки текста:** token identity, acceptance semantics и подавление late results остаются неизменными; функциональных изменений в `src/typr/core/text_injector.py` и `src/typr/app.py` не планируется.
 - **Локальные state tests:** no-device, privacy, default, device removal/recovery, shutdown во время recording/transcribing/typing; тесты быстрого press/release во время открытия stream, delayed stop/close/error/shutdown.
 - **Single-instance:** запуск нескольких экземпляров приложения регламентируется пользовательской инструкцией (системный mutex отложен); изоляция contention между основным рекордером и временными экземплярами микрофонного теста Settings.
+
+### 2.6. Автономная per-user поставка Windows и интеграция локального Docker STT
+- **Формат поставки и автономный рантайм:** ZIP-пакет содержит `Install.bat`, Uninstall.bat, вызывающий `Install.ps1 -Uninstall`, мастер установки `Install.ps1`, модуль `TyprInstaller.ps1` и официальный offline CPython 3.15.2 embeddable amd64 runtime (`python-3.15.2-embed-amd64.zip` / распакованный runtime) вместе с wheel-пакетами Typr и всех runtime-зависимостей (`sounddevice`, `cffi`, `PyQt6`, `httpx`, `websockets` и др.). Внешний freezer (PyInstaller) и сторонние установщики (Inno Setup / WiX) не требуются; смена minor-версии Python не требуется.
+- **Роль сборщика (builder, `Build-Payload.ps1`):** сборщик пересобирает source wheel Typr из актуального дерева репозитория (включая исправление FLS-барьера транскрибера), принимает предварительно подготовленный wheelhouse с манифестом хэшей SHA-256 (`wheelhouse-manifest.json` / `Assert-TyprInventory`), верифицирует предоставленный официальный ZIP-архив CPython 3.15.2 embeddable amd64 по SHA-256 (`d012f3aa29cf07436dae8aea1fec0fd195c2612a0b059b1f915ae0afb9ad1f62`) и формирует автономный ZIP-пакет (автоматическое скачивание зависимостей сборщиком исключено, зависимости подаются в wheelhouse).
+- **Разделение путей программы и данных:** программные файлы и embeddable runtime развертываются строго в каталог пользователя `%LOCALAPPDATA%\Programs\Typr` с изоляцией окружения (`._pth`, `sitecustomize.py`). Пользовательские конфигурации, история и логи изолированы в `%LOCALAPPDATA%\Typr` (`config.json`, `history.json`, `logs\typr.log`), сохраняются при обновлениях и не затираются.
+- **Интеграция локального Docker STT:** мастер установки предлагает выбор бэкенда распознавания (Parakeet, GigaSTT либо внешний/облачный endpoint).
+- **Собственные per-user ресурсы контейнеров:** используются собственные выделенные per-user имена контейнеров по схеме `typr-win-<SID>-<kind>` (например, `typr-win-<SID>-gigastt`) и именованные Docker-тома моделей `typr-win-<SID>-<kind>-models` (монтируются в `/home/gigastt/.gigastt/models` или `/app/models`). При обнаружении конфликта имен или занятости портов мастер выдает явный отказ (fail-fast), запрещая перехват или модификацию чужих/сторонних контейнеров.
+- **Сетевая изоляция демона и сервиса:** привязка портов выполняется исключительно на loopback-интерфейс (`127.0.0.1:9876` для GigaSTT, `127.0.0.1:5092` для Parakeet); проброс во внешние сети и удаленный доступ к Docker daemon запрещены.
+- **Хранение моделей в Docker-томах:** модели сохраняются в именованных Docker-томах `typr-win-<SID>-<kind>-models`, что предотвращает повторное скачивание многогигабайтных весов при перезапусках контейнера.
+- **Интерактивные подтверждения и права:** обязательно явное интерактивное подтверждение пользователя на загрузку тяжелых ресурсов (установщика Docker Desktop, образов, исходников Parakeet по коммиту `06464cd...` с проверкой SHA-256), запуск инсталлятора Docker с повышением UAC (при необходимости; сам инсталлятор Typr выполняется без прав администратора) и создание ярлыка автозапуска в пользовательской папке Startup (без записи в реестр). Ярлык на рабочем столе не создается (только меню «Пуск» и опционально Startup).
+- **Защита системной конфигурации WSL:** скрытые изменения настроек WSL, дистрибутивов или конфигурации демона Docker категорически запрещены.
+- **Безопасная деинсталляция:** деинсталлятор (`Uninstall.bat` / `Install.ps1 -Uninstall`) удаляет файлы программы из `%LOCALAPPDATA%\Programs\Typr`, ярлыки меню «Пуск» (`Programs\Typr.lnk`, `Programs\Uninstall Typr.lnk`) и ярлык автозапуска в Startup; по умолчанию деинсталлятор строго сохраняет пользовательские конфигурации, историю (`%LOCALAPPDATA%\Typr`) и именованные тома моделей Docker (удаление томов моделей требует явного ключа `-RemoveModels`).
 
 ## 3. Последовательные этапы реализации
 
@@ -655,8 +692,34 @@ $harness = 'C:\Users\smale\AppData\Local\Temp\kilo\typr-stage6-9df3f50e6c8549ed9
   - `git diff --check`: чисто.
   - Независимое general-deep review: замечаний нет; targeted suite: **54 passed за 1.49 с** (включая реальные held FLS тесты нормального выхода и cleanup).
   - Снятие блокера `WinError 32`: сканирование корня репозитория обойдено запуском из внешней временной папки с абсолютными флагами `--rootdir`, `--confcutdir`, `--import-mode=importlib`.
-- **Граница готовности пакета:**
-  - Сборка wheel и чистая установка приложения этапа 5 НЕ пересобирались после внесения изменений в транскрибер. Пакетная и нативная проверка полного приложения с новым кодом транскрибера остается **OPEN**. Юнит-тесты на `QCoreApplication` с моками не заменяют сквозную транскрипцию с реальным endpoint и видимым GUI.
+- **Граница готовности пакета (историческая):**
+  - Сборка wheel и чистая установка приложения этапа 5 исходно не пересобирались сразу после внесения изменений в транскрибер.
+  - **Актуальный статус (post-fix package pass):** новый source wheel `typr-0.4.0-py3-none-any.whl` (32 файла, включая `windows_thread.py`) успешно пересобран и прошел полную чистую офлайн-установку (14 бинарных зависимостей + pip, итого 15 wheels), `pip check` (exit 0) и guarded imports (`typr.app`, `typr.__main__`) в Unicode+spaces каталоге с изолированным профилем. Также сквозная верификация WhisperTranscriber на новом установленном рантайме через `QCoreApplication` с синтетической тишиной (1.5 с WAV PCM 16k mono) и реальным HTTP 200 от локального GigaSTT подтвердила native thread exit probe (`WaitForSingleObject`, handle closed, worker reaped, cleanup == True). Пакетный сборщик и узкий transcriber probe — PASS; нативная сквозная проверка полного GUI-приложения и системный Gate 8 остаются PARTIAL / OPEN.
+
+### Этап 6 — Автономный per-user инсталлятор Windows 11 x64 и интеграция локального Docker STT
+
+**Статус (2026-11-07): реализация этапа 6 завершена; automated build PASS; package pass нового fix PASS; натурные ворота на чистой Windows 11 x64 — OPEN.**
+
+Пользователь санкционировал утвержденное продолжение работ по Windows (этап 6). Реализованы скрипты сборки дистрибутива, мастера установки и деинсталлятора в каталоге `scripts/windows`. Раздел фиксирует утвержденный архитектурный контракт, область поставки и чеклист критериев приемки:
+- Скрипт сборщика автономного дистрибутива (builder, `Build-Payload.ps1`): чистая пересборка source wheel Typr с актуальным исходным кодом (включая FLS-исправление транскрибера), проверка официального архива CPython 3.15.2 embeddable amd64 ZIP (скачивание опционально), использование заранее подготовленного wheelhouse бинарных зависимостей с проверкой SHA-256, компоновка автономного ZIP-пакета.
+- Мастер установки (`Install.bat`, `Install.ps1` на Windows PowerShell 5.1): распаковка в `%LOCALAPPDATA%\Programs\Typr`, настройка embeddable runtime (изолированный `._pth`, исключающий влияние внешних сред), создание ярлыков в меню «Пуск» (`Typr`, `Uninstall Typr`), опциональный автозапуск через ярлык в папке Startup (строго с явного подтверждения пользователя, без прав администратора и без записи в реестр; ярлык на рабочем столе не создается).
+- Интеграция локального STT в Docker: интерактивный выбор между Parakeet и GigaSTT (или внешним API), запуск с собственными per-user именами контейнеров `typr-win-<SID>-<kind>` и именованными томами `typr-win-<SID>-<kind>-models`, привязка строго к loopback `127.0.0.1`, отказ при конфликте портов/имен без перехвата чужих ресурсов, переиспользование кэша моделей хоста, запросы подтверждения на скачивание образов/моделей и UAC при необходимости, запрет скрытых правок WSL; для контейнеров действует политика `--restart no`, автозапуск Typr не запускает Docker/STT.
+- Скрипт безопасного удаления (`Uninstall.bat`, вызывающий `Install.ps1 -Uninstall`): корректная очистка `%LOCALAPPDATA%\Programs\Typr`, ярлыков в меню «Пуск» и ярлыка автозапуска в Startup, с безусловным сохранением по умолчанию пользовательских данных в `%LOCALAPPDATA%\Typr` и томов моделей Docker (удаление томов требует явного `-RemoveModels`).
+
+**Ворота готовности этапа 6 (Gate Checklist):**
+- **Gate 6.1 (Builder):** сборка актуального wheel Typr, загрузка/проверка официального CPython 3.15.2 embeddable runtime ZIP, загрузка полного графа бинарных колес wheelhouse, компоновка полностью автономного ZIP-дистрибутива `Typr-Windows-x64-20261107-final.zip` (105 245 862 байт, SHA-256 `9c5e3614a3e09da58b2411c09a8ad6830e972d58722041734f7bf79d7286aaef`). (Статус: **PASS**)
+- **Gate 6.2 (Offline per-user install):** установка и runtime во временном каталоге проверены; ярлыки и согласия проверены mocked harness. Установка в `%LOCALAPPDATA%\Programs\Typr` на чистой Windows без системного Python и реальные Start Menu/Startup остаются OPEN. (Статус: **TEMP / MOCKED PASS; clean Windows OPEN**)
+- **Gate 6.3 (Docker local STT):** выбор пользователем Parakeet/GigaSTT; запуск контейнера строго на loopback-интерфейсе `127.0.0.1`; имена `typr-win-<SID>-<kind>`, тома `typr-win-<SID>-<kind>-models`; политика restart no; отказ при конфликте портов/имен; обнаружение и переиспользование кэша моделей; интерактивные подтверждения на скачивание/сборку (Parakeet commit `06464cd...`, SHA `fa58716...`, верифицировано скачивание архива без сборки; GigaSTT pinned digest `sha256:ac7f7ccb...`, live module PASS). (Статус: **PARTIAL (live Giga PASS; Parakeet unbuilt; end-to-end OPEN)**)
+- **Gate 6.4 (Safe uninstall):** удаление управляемого дерева во временном каталоге с сохранением соседних данных проверено; ярлыки и сохранение моделей проверены mocked harness. Натурная приемка на чистой Windows остается OPEN. (Статус: **TEMP / MOCKED PASS; clean Windows OPEN**)
+- **Gate 6.5 (E2E Integration & Smoke):** запуск установленного через инсталлятор Typr на чистой Windows 11 без системного Python; сквозная работа GUI/трея/PTT/вставки; взаимодействие с локальным Docker STT на loopback. (Статус: **OPEN**)
+
+| Ворота | Область проверки | Результат / Доказательство | Статус |
+| --- | --- | --- | --- |
+| Gate 6.1 | Сборка офлайн-пакета (`Build-Payload.ps1`) | Сформирован `Typr-Windows-x64-20261107-final.zip` (105 МБ, SHA-256 `9c5e3614...`), полный граф зависимостей, pip check PASS, Verify-Runtime PASS | **PASS** |
+| Gate 6.2 | Per-user установка | Temp install, embedded runtime, private fresh config PASS; recovery и shortcuts mocked PASS; чистая ОС и реальные ярлыки не проверены | **TEMP / MOCKED PASS; clean Windows OPEN** |
+| Gate 6.3 | Локальный Docker STT (loopback 127.0.0.1) | GigaSTT live module PASS (`typr-win-<SID>-gigastt`, `/ready` + `/health` rnnt, repeat same ID); Parakeet archive SHA-256 verified download only (unbuilt) | **PARTIAL** |
+| Gate 6.4 | Безопасное удаление | Temp managed tree удалено, соседние данные сохранены; shortcuts и model preservation mocked PASS | **TEMP / MOCKED PASS; clean Windows OPEN** |
+| Gate 6.5 | Сквозной E2E smoke на чистой Windows 11 x64 | Запуск без системного Python, видимый GUI/трей, физический PTT, вставка и локальный STT | **OPEN** |
 
 ## 4. Чеклист верификации и критерий готовности
 
@@ -664,8 +727,9 @@ $harness = 'C:\Users\smale\AppData\Local\Temp\kilo\typr-stage6-9df3f50e6c8549ed9
 - **PASS на Windows CPython 3.15.2 x64:** isolated sdist/wheel, full binary download, clean full install и pip check без `--no-deps`/stubs; gates 1–5 этапа 5.
 - **PASS:** installed imports из Unicode+spaces cwd с изолированным профилем и удаленным PYTHONPATH, без audio module/native init; gates 6–7.
 - **PASS на Windows:** полный applicable pytest актуального исходного кода **280 passed, 2 skipped** и scoped ruff (новый baseline; исторические срезы: 256 passed этапа 5, 232 passed этапа 4); targeted suite **54 passed** за 1.49 с (включая реальные FLS-пробы транскрибера).
-- **OPEN:** пересборка wheel и чистая установка пакета с новым исходным кодом транскрибера и FLS-зонда.
+- **HISTORICAL (superseded):** пересборка wheel и чистая установка пакета этапа 5 исходно не выполнялись сразу после исправления транскрибера. **Актуальный статус:** новый source wheel пересобран, чистая офлайн-установка полного графа зависимостей wheelhouse, `pip check` (exit 0) и guarded imports — PASS; сквозной HTTP-вызов транскрибера на тишине подтвердил native thread exit probe — PASS.
 - **OPEN на Linux:** полный suite и native regressions; Git Bash syntax check их не заменяет.
+- **Этап 6 (Windows installer & Docker STT):** Gate 6.1 PASS; Gates 6.2, 6.4 TEMP / MOCKED PASS (чистая ОС и реальные ярлыки OPEN); Gate 6.3 PARTIAL (live GigaSTT PASS, Parakeet unbuilt); Gate 6.5 OPEN. Финальный полный suite: **284 passed, 2 skipped**.
 
 ### 4.2. Натурный Smoke Checklist (требует отдельного разрешения)
 - **Contained PASS (натурные проверки в ограниченном/инструментированном контуре):**
@@ -679,7 +743,7 @@ $harness = 'C:\Users\smale\AppData\Local\Temp\kilo\typr-stage6-9df3f50e6c8549ed9
   - **Натурный smoke ContainedApp в consoleless-режиме (harness pythonw.exe, exit 1):** таймаут фокуса окна вставки `FocusGuard` (`fg_own=false, pid_own=false, qtactive/focusOwn/visible=true`), точная причина не установлена (ограничения активации Windows — вероятная причина); SendInput предотвращен focus guard; production-дефект не подтвержден; остальные проверки и cleanup воркеров — PASS. Не является квалификацией `typr-gui.exe`. В проверках L/R/T сценарий P исключен для устранения focus race.
 - **OPEN (release / uninstrumented / full):**
   - Старт и работа `typr-gui.exe` без консоли из cwd с Unicode/пробелами в пути как полноценного приложения без инструментального сдерживания (uninstrumented);
-  - Пересборка wheel и чистая установка приложения с новым кодом транскрибера и FLS-зонда;
+  - HISTORICAL: пересборка wheel и чистая установка приложения этапа 5 (новый source wheel пересобран, чистая установка полного графа зависимостей PASS; uninstrumented GUI запуск остается OPEN);
   - Сквозная транскрипция с реальным endpoint и обработка сетевых/API ошибок;
   - Физический PTT (реальные нажатия пользователем на клавиатуре, удержание, release);
   - Физические раскладки клавиатуры (RU/EN) и AltGr;
@@ -690,7 +754,8 @@ $harness = 'C:\Users\smale\AppData\Local\Temp\kilo\typr-stage6-9df3f50e6c8549ed9
   - Device privacy toggles в настройках Windows 11;
   - Hotplug / unplug recovery аудиоустройств;
   - Завершение работы приложения во время активной транскрипции с реальным сетевым запросом;
-  - Базовый нативный регресс Linux (Wayland и X11: PTT через evdev, uinput вставка, восстановление через wl-copy/xclip, shell tests).
+  - Базовый нативный регресс Linux (Wayland и X11: PTT через evdev, uinput вставка, восстановление через wl-copy/xclip, shell tests);
+  - Сквозной натурный smoke автономно установленного Typr без системного Python с локальным Docker STT (Gate 6.5).
 
 ### 4.3. Критерий готовности и открытые ворота
 - Поддержка принимается только если согласованные contracts реализованы, applicable automation и desktop smoke пройдены на обеих ОС без прав admin.
@@ -707,18 +772,22 @@ $harness = 'C:\Users\smale\AppData\Local\Temp\kilo\typr-stage6-9df3f50e6c8549ed9
   6. Hotplug / unplug recovery аудиоустройств;
   7. Завершение работы приложения во время активной фазы транскрипции с реальным HTTP-запросом;
   8. Квалификация продакшен-лаунчера `typr-gui.exe` без инструментального bootstrap и сдерживания;
-  9. Пересборка wheel и чистая установка приложения с новым кодом транскрибера и FLS-зонда;
+  9. HISTORICAL (superseded по сборке пакета): пересборка wheel и чистая установка приложения с новым кодом транскрибера (узкий package pass и HTTP silence probe выполнены; сквозной GUI/uninstrumented runtime и Gate 8 остаются OPEN);
   10. Полная релизная квалификация Python minor;
-  11. Полный нативный регресс Linux (evdev, uinput, clipboard, installer shell checks).
+  11. Полный нативный регресс Linux (evdev, uinput, clipboard, installer shell checks);
+  12. Per-user установка и деинсталляция на чистой Windows 11 без системного Python (Gate 6.1 сборка PASS; Gates 6.2, 6.4 натурная приемка OPEN);
+  13. Интеграция и сквозной запуск локального Docker STT на loopback с верификацией моделей и портов (Gate 6.3 PARTIAL: live GigaSTT module PASS, Parakeet unbuilt; end-to-end OPEN);
+  14. Сквозной E2E smoke автономно установленного Typr с локальным Docker STT (Gate 6.5).
 - Действуют строгие ограничения: запрещена установка новых версий Python без согласования, запрещены несанкционированные GUI и hardware тесты, запрещены git commit и git push.
 
 ## 5. Отложенные задачи (Deferred)
 
-Следующие задачи не входят в минимальный объем первого релиза и требуют отдельного решения при необходимости:
-- Standalone сборка через freezer (PyInstaller/one-dir bundle) и бандлинг нативных библиотек Qt/PortAudio.
-- Windows per-user installer (Inno Setup / WiX) и автоматизация автозапуска в реестре/Startup.
+Следующие задачи не входят в утвержденный объем и требуют отдельного решения при необходимости:
+- Standalone сборка через сторонний freezer (PyInstaller/one-dir bundle) и внешние инсталляторы (Inno Setup / WiX) — не требуются благодаря официальному embeddable runtime ZIP и встроенному PowerShell-мастеру установки.
+- Настройка автозапуска через системный или пользовательский реестр (Run keys) — отложена в пользу безопасного ярлыка в пользовательской папке Startup.
 - Иконка `.ico`, PE metadata (file/product version), подпись Authenticode и SmartScreen reputation.
 - Полноценный snapshot и надежный restore сложных форматов буфера обмена (HTML/RTF/OLE) с учетом TOCTOU.
 - Системный межпроцессный мьютекс (`CreateMutexW`) для блокировки повторного запуска.
 - Полноценный workflow отмены записи (Cancel hotkey).
 - Настройка матрицы Windows в GitHub Actions CI.
+

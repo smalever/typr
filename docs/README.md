@@ -14,7 +14,7 @@
 - `ARCHITECTURE.md` - runtime pipeline, компоненты, зависимости и инварианты.
 - `DEVELOPMENT.md` - локальное окружение, команды проверок и границы hardware-dependent validation.
 - `DOCUMENTATION_POLICY.md` - источники истины и матрица синхронизации code/tests/docs.
-- [WINDOWS_IMPLEMENTATION_PLAN.md](WINDOWS_IMPLEMENTATION_PLAN.md) - план будущей поддержки Windows 11 с сохранением Linux; не описание реализованного поведения.
+- [WINDOWS_IMPLEMENTATION_PLAN.md](WINDOWS_IMPLEMENTATION_PLAN.md) - статус и этапы реализации поддержки Windows 11 с сохранением Linux, фиксация реализованных этапов и открытых релизных ворот.
 
 Kilo обнаруживает skills по YAML frontmatter в `.kilo/skills/*/SKILL.md`. После добавления, удаления или изменения skill перезагрузи project configuration либо начни новую сессию, чтобы гарантированно использовать актуальную версию.
 
